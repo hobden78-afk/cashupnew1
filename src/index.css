@@ -1,0 +1,235 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    background-color: #f4f4f2;
+    color: #1a1a1a;
+  }
+
+  h1, h2, h3, .font-serif {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+
+  .font-mono, input[type="number"], .font-numeric {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* ==========================================================================
+   PRINT MEDIA QUERIES: Physical Audit & Filing Optimization
+   ========================================================================== */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 8mm 10mm 8mm 10mm;
+  }
+
+  /* Reset layout canvas for crisp, clean physical paper output */
+  html, body {
+    background-color: #ffffff !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 10pt !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* 1. STRICTLY HIDE ALL BUTTONS, NAVIGATION, TOOLBARS & INTERACTIVE CONTROLS */
+  button,
+  nav,
+  header,
+  input[type="button"],
+  input[type="submit"],
+  [role="button"],
+  [role="navigation"],
+  .no-print,
+  .print\:hidden,
+  .btn,
+  .toast-notification,
+  .modal-backdrop,
+  .modal-overlay,
+  [data-print-hide="true"],
+  .action-buttons,
+  .navigation-bar,
+  .tab-bar,
+  .dropdown-menu,
+  .react-calendar,
+  .recharts-tooltip-wrapper {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    pointer-events: none !important;
+    opacity: 0 !important;
+  }
+
+  /* Optimize main container */
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    background: #ffffff !important;
+    overflow: visible !important;
+  }
+
+  /* Utility overrides for print layout */
+  .print\:p-0 { padding: 0 !important; }
+  .print\:m-0 { margin: 0 !important; }
+  .print\:border-0 { border: none !important; }
+  .print\:shadow-none { box-shadow: none !important; }
+  .print\:block { display: block !important; }
+  .print\:flex { display: flex !important; }
+  .print\:grid { display: grid !important; }
+  .print\:overflow-visible { overflow: visible !important; }
+  .print\:bg-white { background-color: #ffffff !important; }
+
+  /* Clear form input backgrounds/borders to render as clean printed text */
+  input, select, textarea {
+    border-color: #000000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: #000000 !important;
+    -webkit-appearance: none !important;
+    appearance: none !important;
+    padding-left: 2px !important;
+    padding-right: 2px !important;
+  }
+
+  /* Table structure for audit and filing */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto;
+    border: 2px solid #000000 !important;
+    margin-bottom: 8px !important;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+    page-break-after: auto;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tfoot {
+    display: table-footer-group !important;
+    page-break-inside: avoid !important;
+  }
+
+  th, td {
+    border-color: #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* 2. PROMINENT TOTAL VARIANCE / TILL DIFFERENCE AUDIT HIGHLIGHT */
+  .total-variance-highlight,
+  .print-total-variance,
+  [data-total-variance="true"] {
+    display: block !important;
+    border: 3px double #000000 !important;
+    outline: 2px solid #000000 !important;
+    outline-offset: 1px !important;
+    background-color: #f4f4f5 !important;
+    color: #000000 !important;
+    padding: 8px 14px !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    box-shadow: none !important;
+  }
+
+  .total-variance-highlight * {
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .total-variance-badge,
+  .print-variance-badge {
+    display: inline-block !important;
+    border: 2px solid #000000 !important;
+    padding: 3px 8px !important;
+    font-weight: 900 !important;
+    font-size: 11pt !important;
+    letter-spacing: 0.05em !important;
+    background-color: #000000 !important;
+    color: #ffffff !important;
+    text-transform: uppercase !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Table Footer Total Variance Cell Highlighting */
+  tfoot td.variance-total-cell,
+  tfoot td:last-child {
+    border: 3px double #000000 !important;
+    background-color: #000000 !important;
+    color: #ffffff !important;
+    font-size: 12pt !important;
+    font-weight: 900 !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    text-align: right !important;
+    padding: 8px 10px !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Physical Filing Verification & Signature Block */
+  .print-filing-footer {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: flex-end !important;
+    margin-top: 18px !important;
+    padding-top: 12px !important;
+    border-top: 2px solid #000000 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-sign-line {
+    border-top: 1.5px solid #000000 !important;
+    width: 200px !important;
+    text-align: center !important;
+    font-family: monospace !important;
+    font-size: 9pt !important;
+    font-weight: bold !important;
+    padding-top: 4px !important;
+    color: #000000 !important;
+  }
+
+  .print-audit-stamp {
+    border: 2px solid #000000 !important;
+    background-color: #f4f4f5 !important;
+    padding: 6px 14px !important;
+    text-align: center !important;
+    font-family: monospace !important;
+    font-weight: 900 !important;
+    font-size: 10pt !important;
+    text-transform: uppercase !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Digital Audit QR Code Print Optimization */
+  .print-filing-footer img,
+  [title*="QR"],
+  img[alt*="QR"] {
+    image-rendering: -webkit-optimize-contrast !important;
+    image-rendering: crisp-edges !important;
+    image-rendering: pixelated !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>Daily Till Cashing Up Sheet</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600;1,700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-[#f4f4f2] text-[#1a1a1a] antialiased">
+    <div id="root">
+      <div style="min-height: 100vh; background-color: #000000; color: #ffffff; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; padding: 16px; text-align: center;">
+        <div style="width: 44px; height: 44px; background-color: #fbbf24; color: #000000; font-family: 'Playfair Display', Georgia, serif; font-weight: bold; font-size: 24px; display: flex; align-items: center; justify-content: center; border-radius: 6px; margin-bottom: 16px; border: 1px solid #000;">Δ</div>
+        <div style="width: 32px; height: 32px; border: 3px solid #333333; border-top-color: #fbbf24; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+        <p style="margin-top: 16px; font-size: 11px; font-weight: 700; color: #fbbf24; letter-spacing: 0.15em; text-transform: uppercase;">Daily Till Reconciliation</p>
+        <p style="margin-top: 6px; font-size: 13px; color: #a1a1aa;">Loading application &amp; cached records...</p>
+        <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

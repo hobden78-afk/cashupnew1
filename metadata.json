@@ -1,0 +1,6 @@
+{
+  "name": "Daily Till Cashing Up Sheet",
+  "description": "Daily till reconciliation and cash up sheet with automatic variance calculations, weekly reporting, and record management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
