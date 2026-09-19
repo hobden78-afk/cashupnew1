@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActiveTab, SheetRecord, ViewMode } from './types';
+import { ActiveTab, SheetRecord, ViewMode, AuditLogEntry, AuditActionType } from './types';
 import {
   TrendingUp,
   Receipt,
@@ -12,43 +12,77 @@ import {
   Sparkles,
   RefreshCw,
   ChevronDown,
+  Lock,
+  Shield,
+  Download,
+  Database,
+  FileSpreadsheet,
+  Menu,
 } from 'lucide-react';
 import {
   createBlankRows,
   DEFAULT_OPERATORS,
   INITIAL_RECORDS,
 } from './data/initialData';
+import { INITIAL_AUDIT_LOGS } from './data/initialAuditData';
 import {
   calculateGrandTotals,
   downloadCSV,
   exportRecordToCSV,
   formatCurrency,
   formatToUKDate,
+  getWeekStartAndEnd,
   recalculateAllRecords,
   sortRecordsByDate,
   filterRecordsByFinancialYear,
 } from './utils/calculations';
+import {
+  diffSheetRecords,
+  createRecordAuditEntry,
+  deleteRecordAuditEntry,
+  recalculateAuditEntry,
+  restoreBackupAuditEntry,
+  generateAuditId,
+} from './utils/auditLogger';
 import { Header } from './components/Header';
 import { DeltaSheetForm } from './components/DeltaSheetForm';
 import { ModernSheetForm } from './components/ModernSheetForm';
 import { RecordsList } from './components/RecordsList';
 import { WeeklyReportView } from './components/WeeklyReportView';
+import { MonthlyReportView } from './components/MonthlyReportView';
+import { AuditLogView } from './components/AuditLogView';
+import { MenuView } from './components/MenuView';
+import { ShareAppModal } from './components/ShareAppModal';
+import { BackupModal } from './components/BackupModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { GoogleCalendarModal } from './components/GoogleCalendarModal';
 import { DateRangeReportModal } from './components/DateRangeReportModal';
 import { BulkExportModal } from './components/BulkExportModal';
 import { OperatorModal } from './components/OperatorModal';
 import { FinancialYearFormat, FinancialYearSwitcher } from './components/FinancialYearSwitcher';
+import { LockScreen } from './components/LockScreen';
+import { SecuritySettingsModal } from './components/SecuritySettingsModal';
+import { 
+  SecurityConfig, 
+  DEFAULT_SECURITY_CONFIG, 
+  SECURITY_STORAGE_KEY, 
+  SECURITY_SESSION_KEY 
+} from './utils/security';
 import { 
   db, 
   RECORDS_COLLECTION, 
   SETTINGS_COLLECTION, 
+  AUDIT_COLLECTION,
   OPERATORS_DOC,
+  SECURITY_DOC,
   saveRecordToCloud, 
   saveRecordToCloudImmediately,
   deleteRecordFromCloud, 
   saveOperatorsToCloud, 
-  syncAllRecordsToCloud 
+  saveSecurityConfigToCloud,
+  syncAllRecordsToCloud,
+  saveAuditEntryToCloud,
+  syncAuditLogsToCloud
 } from './lib/firebase';
 import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
@@ -57,6 +91,75 @@ import { auth, googleSignIn, googleLogout } from './lib/googleAuth';
 const STORAGE_KEY = 'delta_till_cashing_up_records_v1';
 const OPERATORS_STORAGE_KEY = 'delta_till_operators_v1';
 const DELETED_IDS_STORAGE_KEY = 'delta_till_deleted_records_v1';
+const AUDIT_LOGS_STORAGE_KEY = 'delta_till_audit_logs_v1';
+const LAST_ENTERED_RECORD_ID_KEY = 'delta_till_last_entered_record_id_v1';
+
+/**
+ * Find the most recently entered record in the dataset.
+ * Prioritizes:
+ * 1. The record with the newest createdAt timestamp (most recently entered).
+ * 2. If createdAt is identical or missing, the record with the most recent calendar date (YYYY-MM-DD).
+ */
+function getLatestEnteredRecord(recordList: SheetRecord[]): SheetRecord | undefined {
+  if (!recordList || recordList.length === 0) return undefined;
+
+  return [...recordList].sort((a, b) => {
+    // 1. Compare createdAt if both exist and differ significantly (> 1s)
+    const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    if (aCreated && bCreated && Math.abs(aCreated - bCreated) > 1000) {
+      return bCreated - aCreated;
+    }
+
+    // 2. Compare calendar date descending (newest date first)
+    const aDate = a.date || '';
+    const bDate = b.date || '';
+    const dateDiff = bDate.localeCompare(aDate);
+    if (dateDiff !== 0) return dateDiff;
+
+    // 3. Compare updatedAt if available
+    const aUpdated = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+    const bUpdated = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+    if (aUpdated && bUpdated) {
+      return bUpdated - aUpdated;
+    }
+
+    return bCreated - aCreated;
+  })[0];
+}
+
+/**
+ * Determine the record ID to display on startup.
+ * Checks the last record entered or saved in localStorage.
+ * If a newer record was entered into the database (by date or createdAt),
+ * it displays that latest entered record.
+ */
+function getStartupRecordId(recordList: SheetRecord[]): string | undefined {
+  if (!recordList || recordList.length === 0) return undefined;
+
+  const latestEntered = getLatestEnteredRecord(recordList);
+
+  try {
+    const savedId = localStorage.getItem(LAST_ENTERED_RECORD_ID_KEY);
+    if (savedId) {
+      const savedRecord = recordList.find((r) => r.id === savedId);
+      if (savedRecord) {
+        // If the latest entered record in the database is newer than the saved record,
+        // display the latest entered record
+        if (latestEntered && latestEntered.id !== savedRecord.id) {
+          const savedDate = savedRecord.date || '';
+          const latestDate = latestEntered.date || '';
+          if (latestDate > savedDate) {
+            return latestEntered.id;
+          }
+        }
+        return savedRecord.id;
+      }
+    }
+  } catch (e) {}
+
+  return latestEntered?.id || recordList[0]?.id;
+}
 
 export default function App() {
   const [deletedIds, setDeletedIds] = useState<Set<string>>(() => {
@@ -101,11 +204,26 @@ export default function App() {
   });
 
   const [activeRecordId, setActiveRecordId] = useState<string>(() => {
-    return records[0]?.id || 'rec-2026-08-01';
+    return getStartupRecordId(records) || records[0]?.id || 'rec-2026-08-01';
   });
+
+  const isInitialCloudLoadRef = React.useRef<boolean>(true);
 
   const [viewMode, setViewMode] = useState<ViewMode>('classic');
   const [activeTab, setActiveTab] = useState<ActiveTab>('sheet');
+
+  // Audit Logs State (with offline caching and seed data)
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => {
+    try {
+      const saved = localStorage.getItem(AUDIT_LOGS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return INITIAL_AUDIT_LOGS;
+  });
+
   const [isHeaderHiddenOnSheet, setIsHeaderHiddenOnSheet] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem('delta_till_hide_header_on_sheet_v1');
@@ -154,6 +272,8 @@ export default function App() {
   const [isRangeReportOpen, setIsRangeReportOpen] = useState(false);
   const [isBulkExportOpen, setIsBulkExportOpen] = useState(false);
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [cloudStatus, setCloudStatus] = useState<'connected' | 'connecting' | 'offline' | 'error'>('connecting');
   const [deleteModal, setDeleteModal] = useState<{
@@ -162,6 +282,79 @@ export default function App() {
     dateStr?: string;
     isOnlyRecord?: boolean;
   }>({ isOpen: false });
+
+  // Security & Password Protection State
+  const [securityConfig, setSecurityConfig] = useState<SecurityConfig>(() => {
+    try {
+      const saved = localStorage.getItem(SECURITY_STORAGE_KEY);
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {}
+    return DEFAULT_SECURITY_CONFIG;
+  });
+
+  const [isAppLocked, setIsAppLocked] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(SECURITY_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.isEnabled && parsed.passwordHash) {
+          const session = sessionStorage.getItem(SECURITY_SESSION_KEY);
+          if (session === 'unlocked' && parsed.autoLockMinutes !== 0) {
+            return false;
+          }
+          return true;
+        }
+      }
+    } catch (e) {}
+    return false;
+  });
+
+  const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
+  const [isInitialSecuritySetup, setIsInitialSecuritySetup] = useState(false);
+
+  // Inactivity Auto-Lock Timer
+  useEffect(() => {
+    if (!securityConfig.isEnabled || !securityConfig.passwordHash || isAppLocked) return;
+    if (securityConfig.autoLockMinutes === -1) return; // Never auto-lock while active
+
+    let timeoutId: any = null;
+
+    const resetTimer = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (securityConfig.autoLockMinutes > 0) {
+        timeoutId = setTimeout(() => {
+          setIsAppLocked(true);
+          try {
+            sessionStorage.removeItem(SECURITY_SESSION_KEY);
+          } catch (e) {}
+          showToast('App automatically locked due to inactivity');
+        }, securityConfig.autoLockMinutes * 60 * 1000);
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && securityConfig.autoLockMinutes === 0) {
+        setIsAppLocked(true);
+        try {
+          sessionStorage.removeItem(SECURITY_SESSION_KEY);
+        } catch (e) {}
+      }
+    };
+
+    const events = ['mousedown', 'mousemove', 'keydown', 'touchstart', 'scroll'];
+    events.forEach((ev) => window.addEventListener(ev, resetTimer, { passive: true }));
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    resetTimer();
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      events.forEach((ev) => window.removeEventListener(ev, resetTimer));
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [securityConfig, isAppLocked]);
 
   // Listen to Firebase Auth state
   useEffect(() => {
@@ -230,6 +423,15 @@ export default function App() {
             try {
               localStorage.setItem(STORAGE_KEY, JSON.stringify(sortedCloud));
             } catch (e) {}
+
+            // On initial startup / cloud load, ensure the active record is the last record entered
+            if (isInitialCloudLoadRef.current) {
+              isInitialCloudLoadRef.current = false;
+              const startupId = getStartupRecordId(sortedCloud);
+              if (startupId) {
+                setActiveRecordId(startupId);
+              }
+            }
           } else {
             // If Cloud collection is completely empty, seed INITIAL_RECORDS once
             if (!isInitialCloudSeedAttempted) {
@@ -240,6 +442,14 @@ export default function App() {
               try {
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(initialRecalculated));
               } catch (e) {}
+
+              if (isInitialCloudLoadRef.current) {
+                isInitialCloudLoadRef.current = false;
+                const startupId = getStartupRecordId(initialRecalculated);
+                if (startupId) {
+                  setActiveRecordId(startupId);
+                }
+              }
             }
           }
         },
@@ -291,6 +501,80 @@ export default function App() {
     };
   }, []);
 
+  // 3. Subscribe to Firebase Firestore real-time updates for Security Settings
+  useEffect(() => {
+    let unsub: (() => void) | null = null;
+    try {
+      unsub = onSnapshot(
+        doc(db, SETTINGS_COLLECTION, SECURITY_DOC),
+        (docSnap) => {
+          if (docSnap.exists()) {
+            const data = docSnap.data() as SecurityConfig;
+            if (data && typeof data.isEnabled === 'boolean') {
+              setSecurityConfig((prev) => {
+                const updated = { ...prev, ...data };
+                try {
+                  localStorage.setItem(SECURITY_STORAGE_KEY, JSON.stringify(updated));
+                } catch (e) {}
+                return updated;
+              });
+            }
+          }
+        },
+        (err) => {
+          console.warn('Firestore security sync notice:', err?.message || err);
+        }
+      );
+    } catch (err) {
+      console.warn('Firestore security subscription notice:', err);
+    }
+
+    return () => {
+      if (unsub) unsub();
+    };
+  }, []);
+
+  // 4. Subscribe to Firebase Firestore real-time updates for Audit Logs
+  useEffect(() => {
+    let unsub: (() => void) | null = null;
+    try {
+      unsub = onSnapshot(
+        collection(db, AUDIT_COLLECTION),
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const cloudLogs: AuditLogEntry[] = [];
+            snapshot.forEach((docSnap) => {
+              const data = docSnap.data() as AuditLogEntry;
+              if (data && data.id) {
+                cloudLogs.push(data);
+              }
+            });
+
+            if (cloudLogs.length > 0) {
+              setAuditLogs((prev) => {
+                const map = new Map<string, AuditLogEntry>();
+                prev.forEach((l) => map.set(l.id, l));
+                cloudLogs.forEach((l) => map.set(l.id, l));
+                return Array.from(map.values()).sort(
+                  (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+                );
+              });
+            }
+          }
+        },
+        (err) => {
+          console.warn('Firestore audit logs sync notice:', err?.message || err);
+        }
+      );
+    } catch (err) {
+      console.warn('Firestore audit logs subscription notice:', err);
+    }
+
+    return () => {
+      if (unsub) unsub();
+    };
+  }, []);
+
   // Backup to localStorage as secondary cache
   useEffect(() => {
     try {
@@ -308,11 +592,83 @@ export default function App() {
     }
   }, [operators]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(SECURITY_STORAGE_KEY, JSON.stringify(securityConfig));
+    } catch (err) {
+      console.error('Failed to save security config to localStorage:', err);
+    }
+  }, [securityConfig]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(AUDIT_LOGS_STORAGE_KEY, JSON.stringify(auditLogs));
+    } catch (err) {
+      console.error('Failed to save audit logs to localStorage:', err);
+    }
+  }, [auditLogs]);
+
+  // Helper to add an audit log entry both locally and to Cloud
+  const addAuditLog = (entry: AuditLogEntry) => {
+    setAuditLogs((prev) => [entry, ...prev.filter((l) => l.id !== entry.id)]);
+    saveAuditEntryToCloud(entry);
+  };
+
+  // Helper to resolve current actor / user display label
+  const resolveCurrentUser = (recordOperator?: string): string => {
+    if (authUser?.displayName && recordOperator && authUser.displayName !== recordOperator) {
+      return `${recordOperator} (${authUser.displayName})`;
+    }
+    if (authUser?.displayName) return authUser.displayName;
+    if (authUser?.email) return authUser.email;
+    if (recordOperator) return recordOperator;
+    return 'Operator / Cashier';
+  };
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
       setToastMessage(null);
     }, 3500);
+  };
+
+  const handleSaveSecurityConfig = (newConfig: SecurityConfig) => {
+    setSecurityConfig(newConfig);
+    try {
+      localStorage.setItem(SECURITY_STORAGE_KEY, JSON.stringify(newConfig));
+    } catch (e) {}
+    saveSecurityConfigToCloud(newConfig);
+
+    if (!newConfig.isEnabled || !newConfig.passwordHash) {
+      setIsAppLocked(false);
+      try {
+        sessionStorage.removeItem(SECURITY_SESSION_KEY);
+      } catch (e) {}
+      showToast('Password protection disabled.');
+    } else {
+      showToast('Security settings updated successfully.');
+    }
+  };
+
+  const handleUnlockApp = () => {
+    setIsAppLocked(false);
+    setIsInitialSecuritySetup(false);
+    try {
+      sessionStorage.setItem(SECURITY_SESSION_KEY, 'unlocked');
+    } catch (e) {}
+    showToast('App unlocked successfully.');
+  };
+
+  const handleLockAppNow = () => {
+    if (!securityConfig.isEnabled || !securityConfig.passwordHash) {
+      setIsSecurityModalOpen(true);
+      return;
+    }
+    setIsAppLocked(true);
+    try {
+      sessionStorage.removeItem(SECURITY_SESSION_KEY);
+    } catch (e) {}
+    showToast('Application locked.');
   };
 
   const handleAddOperator = (name: string) => {
@@ -388,8 +744,158 @@ export default function App() {
   };
   const monthDisplayName = getMonthDisplayName(targetMonthKey);
 
+  // Active day sheet totals (live copy of Day Total / Sys Total 3, etc.)
+  const currentRecordTotals = React.useMemo(() => {
+    if (!currentRecord) return null;
+    return calculateGrandTotals(currentRecord.rows, currentRecord, records);
+  }, [currentRecord, records]);
+
+  // Active week statistics based on current active record date (Sys 3 week total)
+  const currentWeekInfo = React.useMemo(() => {
+    if (!currentRecord?.date) return null;
+    return getWeekStartAndEnd(currentRecord.date);
+  }, [currentRecord?.date]);
+
+  const { currentWeekSys3Total, currentWeekDaysCount } = React.useMemo(() => {
+    if (!currentWeekInfo) return { currentWeekSys3Total: 0, currentWeekDaysCount: 0 };
+
+    const weekRecords = records.filter(
+      (r) => r.date && r.date >= currentWeekInfo.mondayISO && r.date <= currentWeekInfo.sundayISO
+    );
+
+    let sys3Total = 0;
+    let foundCurrent = false;
+
+    weekRecords.forEach((r) => {
+      if (r.id === currentRecord?.id) {
+        foundCurrent = true;
+        // Use live totals from currently active sheet if editing
+        sys3Total += currentRecordTotals ? currentRecordTotals.totalCol3Expected : 0;
+      } else {
+        const totals = calculateGrandTotals(r.rows, r, records);
+        sys3Total += totals.totalCol3Expected;
+      }
+    });
+
+    // If current record date is within this week but not yet in records array
+    if (
+      !foundCurrent &&
+      currentRecord?.date &&
+      currentRecord.date >= currentWeekInfo.mondayISO &&
+      currentRecord.date <= currentWeekInfo.sundayISO &&
+      currentRecordTotals
+    ) {
+      sys3Total += currentRecordTotals.totalCol3Expected;
+    }
+
+    return {
+      currentWeekSys3Total: sys3Total,
+      currentWeekDaysCount: weekRecords.length + (!foundCurrent && currentRecord ? 1 : 0),
+    };
+  }, [currentWeekInfo, records, currentRecord, currentRecordTotals]);
+
+  // Undo history for active day sheet
+  const [undoStack, setUndoStack] = useState<SheetRecord[]>([]);
+
+  // Audit log baseline snapshot & debounce timer
+  const auditBaselineRef = React.useRef<SheetRecord | null>(null);
+  const auditDebounceTimerRef = React.useRef<any>(null);
+
+  // When active record changes, flush pending audit comparison, update baseline, and remember last accessed record
+  useEffect(() => {
+    if (auditDebounceTimerRef.current) {
+      clearTimeout(auditDebounceTimerRef.current);
+      auditDebounceTimerRef.current = null;
+    }
+    auditBaselineRef.current = currentRecord ? JSON.parse(JSON.stringify(currentRecord)) : null;
+    setUndoStack([]);
+
+    if (activeRecordId) {
+      try {
+        localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, activeRecordId);
+      } catch (e) {}
+    }
+  }, [activeRecordId]);
+
   // Update active record in records state & sync to Cloud
-  const handleUpdateRecord = (updatedRecord: SheetRecord, immediate = false) => {
+  const handleUpdateRecord = (updatedRecord: SheetRecord, immediate = false, isUndoAction = false) => {
+    // If this is a normal edit (not an undo restore), record current snapshot to undo history
+    if (!isUndoAction && currentRecord && currentRecord.id === updatedRecord.id) {
+      const prevDataStr = JSON.stringify({
+        date: currentRecord.date,
+        operator: currentRecord.operator,
+        isSaved: currentRecord.isSaved,
+        rows: currentRecord.rows,
+      });
+      const nextDataStr = JSON.stringify({
+        date: updatedRecord.date,
+        operator: updatedRecord.operator,
+        isSaved: updatedRecord.isSaved,
+        rows: updatedRecord.rows,
+      });
+      if (prevDataStr !== nextDataStr) {
+        setUndoStack((prev) => [...prev.slice(-30), currentRecord]);
+      }
+    }
+
+    // Capture Audit Log changes
+    if (isUndoAction) {
+      addAuditLog({
+        id: generateAuditId(),
+        timestamp: new Date().toISOString(),
+        recordId: updatedRecord.id,
+        recordDate: updatedRecord.date,
+        user: resolveCurrentUser(updatedRecord.operator),
+        userEmail: authUser?.email || undefined,
+        actionType: 'edit',
+        summary: `Reverted recent changes on ${formatToUKDate(updatedRecord.date)} sheet via Undo (Ctrl+Z)`,
+      });
+      auditBaselineRef.current = JSON.parse(JSON.stringify(updatedRecord));
+    } else if (immediate) {
+      if (auditDebounceTimerRef.current) {
+        clearTimeout(auditDebounceTimerRef.current);
+        auditDebounceTimerRef.current = null;
+      }
+      const baseline = auditBaselineRef.current || currentRecord;
+      if (baseline && baseline.id === updatedRecord.id) {
+        const diffEntry = diffSheetRecords(
+          baseline,
+          updatedRecord,
+          resolveCurrentUser(updatedRecord.operator),
+          authUser?.email || undefined
+        );
+        if (diffEntry) {
+          addAuditLog(diffEntry);
+        }
+      }
+      auditBaselineRef.current = JSON.parse(JSON.stringify(updatedRecord));
+    } else {
+      // Debounce audit logging for keyboard entry to produce single neat log entry
+      if (!auditBaselineRef.current || auditBaselineRef.current.id !== updatedRecord.id) {
+        auditBaselineRef.current = currentRecord
+          ? JSON.parse(JSON.stringify(currentRecord))
+          : JSON.parse(JSON.stringify(updatedRecord));
+      }
+      if (auditDebounceTimerRef.current) {
+        clearTimeout(auditDebounceTimerRef.current);
+      }
+      auditDebounceTimerRef.current = setTimeout(() => {
+        const baseline = auditBaselineRef.current;
+        if (baseline && baseline.id === updatedRecord.id) {
+          const diffEntry = diffSheetRecords(
+            baseline,
+            updatedRecord,
+            resolveCurrentUser(updatedRecord.operator),
+            authUser?.email || undefined
+          );
+          if (diffEntry) {
+            addAuditLog(diffEntry);
+          }
+        }
+        auditBaselineRef.current = JSON.parse(JSON.stringify(updatedRecord));
+      }, 900);
+    }
+
     const recordWithTime = {
       ...updatedRecord,
       updatedAt: new Date().toISOString(),
@@ -405,6 +911,34 @@ export default function App() {
     }
   };
 
+  const handleUndo = () => {
+    if (undoStack.length === 0) {
+      showToast('No recent changes to undo.');
+      return;
+    }
+    const previousSnapshot = undoStack[undoStack.length - 1];
+    setUndoStack((prev) => prev.slice(0, -1));
+    handleUpdateRecord(previousSnapshot, true, true);
+    showToast(`Undid change on ${formatToUKDate(previousSnapshot.date)} sheet.`);
+  };
+
+  // Keyboard shortcut listener for Ctrl+Z / Cmd+Z
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        const activeElem = document.activeElement;
+        const isInputActive =
+          activeElem && (activeElem.tagName === 'INPUT' || activeElem.tagName === 'TEXTAREA');
+        if (!isInputActive && undoStack.length > 0 && activeTab === 'sheet') {
+          e.preventDefault();
+          handleUndo();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undoStack, activeTab]);
+
   // Recalculate ALL records in state, cascade previous floats, sync card machines, and sync to Cloud
   const handleRecalculateAllData = async () => {
     const recalculated = recalculateAllRecords(records);
@@ -412,6 +946,14 @@ export default function App() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(recalculated));
     } catch (e) {}
+
+    addAuditLog(
+      recalculateAuditEntry(
+        recalculated.length,
+        resolveCurrentUser(),
+        authUser?.email || undefined
+      )
+    );
 
     try {
       await syncAllRecordsToCloud(recalculated);
@@ -512,7 +1054,9 @@ export default function App() {
     const initialRows = createBlankRows();
     if (prevRecord && prevRecord.rows) {
       initialRows.forEach((row) => {
-        const prevRow = prevRecord.rows.find((pr) => pr.id === row.id || pr.name === row.name);
+        const prevRow = prevRecord.rows.find(
+          (pr) => pr.id === row.id || pr.name === row.name || (pr.name && row.name && pr.name.toLowerCase() === row.name.toLowerCase())
+        );
         const floatVal = prevRow && typeof prevRow.col5FloatCash === 'number' ? prevRow.col5FloatCash : 0;
         row.col1ExpectedCash = floatVal;
         row.prevFloat = floatVal;
@@ -531,6 +1075,13 @@ export default function App() {
 
     setRecords((prev) => sortRecordsByDate([newRec, ...prev]));
     saveRecordToCloudImmediately(newRec);
+    addAuditLog(
+      createRecordAuditEntry(
+        newRec,
+        resolveCurrentUser(newRec.operator),
+        authUser?.email || undefined
+      )
+    );
     setActiveRecordId(newRec.id);
     setActiveTab('sheet');
     showToast(`New sheet created for ${formatToUKDate(newDate)} (Float carried over from previous day).`);
@@ -610,10 +1161,18 @@ export default function App() {
     deleteRecordFromCloud(targetId);
 
     if (activeRecordId === targetId && updatedList.length > 0) {
-      setActiveRecordId(updatedList[0].id);
+      const nextId = getStartupRecordId(updatedList) || updatedList[0].id;
+      setActiveRecordId(nextId);
     }
 
     if (recToDelete) {
+      addAuditLog(
+        deleteRecordAuditEntry(
+          recToDelete,
+          resolveCurrentUser(recToDelete.operator),
+          authUser?.email || undefined
+        )
+      );
       showToast(`Record for ${formatToUKDate(recToDelete.date)} deleted from all devices.`);
     }
   };
@@ -644,6 +1203,49 @@ export default function App() {
     }
   };
 
+  // Jump to specific date or create new sheet for selected date
+  const handleGoToDate = (targetDate: string) => {
+    if (!targetDate) return;
+    const existing = records.find((r) => r.date === targetDate);
+    if (existing) {
+      setActiveRecordId(existing.id);
+      setActiveTab('sheet');
+      showToast(`Jumped to day sheet for ${formatToUKDate(targetDate)}.`);
+    } else {
+      // Find previous day's record to carry over float into Sys cash
+      const sortedExisting = sortRecordsByDate(records);
+      const prevRecord = sortedExisting.find((r) => r.date < targetDate) || sortedExisting[0];
+
+      const initialRows = createBlankRows();
+      if (prevRecord && prevRecord.rows) {
+        initialRows.forEach((row) => {
+          const prevRow = prevRecord.rows.find(
+            (pr) => pr.id === row.id || pr.name === row.name || (pr.name && row.name && pr.name.toLowerCase() === row.name.toLowerCase())
+          );
+          const floatVal = prevRow && typeof prevRow.col5FloatCash === 'number' ? prevRow.col5FloatCash : 0;
+          row.col1ExpectedCash = floatVal;
+          row.prevFloat = floatVal;
+        });
+      }
+
+      const newRec: SheetRecord = {
+        id: `rec-${targetDate}-${Date.now()}`,
+        date: targetDate,
+        operator: operators[0] || '',
+        isSaved: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        rows: initialRows,
+      };
+
+      setRecords((prev) => sortRecordsByDate([newRec, ...prev]));
+      saveRecordToCloudImmediately(newRec);
+      setActiveRecordId(newRec.id);
+      setActiveTab('sheet');
+      showToast(`Created & opened new sheet for ${formatToUKDate(targetDate)}.`);
+    }
+  };
+
   // Export current record to Excel / CSV
   const handleExportCurrentCSV = () => {
     if (!currentRecord) return;
@@ -664,40 +1266,99 @@ export default function App() {
     setActiveRecordId(INITIAL_RECORDS[0].id);
     syncAllRecordsToCloud(INITIAL_RECORDS);
     saveOperatorsToCloud(DEFAULT_OPERATORS);
+    addAuditLog({
+      id: generateAuditId(),
+      timestamp: new Date().toISOString(),
+      recordId: 'system',
+      recordDate: INITIAL_RECORDS[0].date,
+      user: resolveCurrentUser(),
+      userEmail: authUser?.email || undefined,
+      actionType: 'restore',
+      summary: 'Reset database to original sample records & standard till configuration',
+    });
     showToast('Reset to original sample data (01/08/2026) and synced to Cloud.');
   };
 
-  // Export JSON backup
+  // Export comprehensive JSON backup & sync to Cloud
   const handleBackupJSON = () => {
-    const jsonStr = JSON.stringify(records, null, 2);
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10);
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+
+    const backupPayload = {
+      app: 'Delta Daily Till Cashing',
+      version: '2.0',
+      exportedAt: now.toISOString(),
+      recordCount: records.length,
+      records: records,
+      operators: operators,
+    };
+
+    const jsonStr = JSON.stringify(backupPayload, null, 2);
     const blob = new Blob([jsonStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Till_Database_Backup_${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `Till_Database_Backup_${dateStr}_${timeStr}.json`;
+    document.body.appendChild(a);
     a.click();
-    showToast('Backup downloaded successfully.');
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    // Also trigger cloud sync as part of backup
+    syncAllRecordsToCloud(records);
+    saveOperatorsToCloud(operators);
+
+    showToast(`💾 Backup complete! ${records.length} records & staff roster saved to file & Cloud.`);
   };
 
-  // Restore JSON backup & sync to Cloud
+  // Restore JSON backup & sync to Cloud (supports legacy array and envelope formats)
   const handleRestoreJSON = (file: File) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const content = e.target?.result as string;
         const parsed = JSON.parse(content);
+
+        let recordsToRestore: SheetRecord[] = [];
+        let operatorsToRestore: string[] | null = null;
+
         if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].rows) {
+          recordsToRestore = parsed;
+        } else if (parsed && Array.isArray(parsed.records) && parsed.records.length > 0) {
+          recordsToRestore = parsed.records;
+          if (Array.isArray(parsed.operators) && parsed.operators.length > 0) {
+            operatorsToRestore = parsed.operators;
+          }
+        }
+
+        if (recordsToRestore.length > 0) {
           setDeletedIds(new Set());
           localStorage.removeItem(DELETED_IDS_STORAGE_KEY);
-          setRecords(parsed);
-          setActiveRecordId(parsed[0].id);
-          syncAllRecordsToCloud(parsed);
-          showToast('Database restored and synced to Cloud successfully!');
+          setRecords(recordsToRestore);
+          const startupId = getStartupRecordId(recordsToRestore) || recordsToRestore[0].id;
+          setActiveRecordId(startupId);
+          syncAllRecordsToCloud(recordsToRestore);
+
+          if (operatorsToRestore) {
+            setOperators(operatorsToRestore);
+            saveOperatorsToCloud(operatorsToRestore);
+          }
+
+          addAuditLog(
+            restoreBackupAuditEntry(
+              recordsToRestore.length,
+              resolveCurrentUser(),
+              authUser?.email || undefined
+            )
+          );
+
+          showToast(`✅ Database restored! ${recordsToRestore.length} records loaded & synced.`);
         } else {
-          alert('Invalid backup file structure.');
+          alert('Invalid backup file: Could not find valid till records.');
         }
       } catch (err) {
-        alert('Failed to parse JSON file.');
+        alert('Failed to parse JSON file. Please select a valid till database backup.');
       }
     };
     reader.readAsText(file);
@@ -768,8 +1429,38 @@ export default function App() {
                 className="flex items-center gap-1.5 px-2 py-1 rounded-xs text-xs font-bold uppercase tracking-wider text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
               >
                 <BarChart3 className="w-3 h-3 text-zinc-400" />
-                <span className="hidden sm:inline">Weekly Report</span>
-                <span className="sm:hidden">Weekly</span>
+                <span className="hidden sm:inline">Weekly</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('monthly')}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-xs text-xs font-bold uppercase tracking-wider text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+              >
+                <TrendingUp className="w-3 h-3 text-zinc-400" />
+                <span className="hidden sm:inline">Monthly</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('audit')}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-xs text-xs font-bold uppercase tracking-wider text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+              >
+                <FileSpreadsheet className="w-3 h-3 text-zinc-400" />
+                <span className="hidden sm:inline">Audit Log</span>
+                <span className="sm:hidden">Audit</span>
+                {auditLogs.length > 0 && (
+                  <span className="px-1.5 py-0.2 text-[9px] rounded-full font-mono font-bold bg-zinc-800 text-amber-400">
+                    {auditLogs.length}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setActiveTab('menu')}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-xs text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer text-amber-300 hover:text-white hover:bg-zinc-800"
+                title="Open System Menu"
+              >
+                <Menu className="w-3 h-3 text-amber-400" />
+                <span>Menu</span>
               </button>
             </div>
 
@@ -817,6 +1508,16 @@ export default function App() {
               </button>
             </div>
 
+            {/* Backup Button (Instant One-Click Backup, Green) */}
+            <button
+              onClick={handleBackupJSON}
+              className="flex items-center gap-1 px-2.5 py-1 text-xs font-black uppercase tracking-wider bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-950 shadow-xs cursor-pointer active:translate-x-0.5 active:translate-y-0.5 transition-all rounded-xs"
+              title="Backup all daily records and staff data immediately to JSON file"
+            >
+              <Download className="w-3.5 h-3.5 text-white" />
+              <span className="hidden sm:inline">Backup</span>
+            </button>
+
             {/* Recalculate Page Values */}
             <button
               onClick={handleRecalculateSheet}
@@ -826,6 +1527,18 @@ export default function App() {
               <RefreshCw className="w-3 h-3" />
               <span className="hidden sm:inline">Recalculate</span>
             </button>
+
+            {/* Quick Lock / Security Button on collapsed header */}
+            {securityConfig.isEnabled && securityConfig.passwordHash && (
+              <button
+                onClick={handleLockAppNow}
+                className="flex items-center gap-1 px-2 py-1 text-xs font-bold uppercase tracking-wider bg-zinc-900 hover:bg-zinc-800 text-amber-400 border border-amber-500/50 shadow-xs cursor-pointer active:translate-x-0.5 active:translate-y-0.5 transition-all rounded-xs"
+                title="Lock App immediately"
+              >
+                <Lock className="w-3 h-3 text-amber-400" />
+                <span className="hidden sm:inline">Lock</span>
+              </button>
+            )}
 
             {/* Show Full Header Button */}
             <button
@@ -845,56 +1558,98 @@ export default function App() {
           activeTab={activeTab}
           onChangeActiveTab={setActiveTab}
           recordCount={records.length}
-          onResetSampleData={handleResetSampleData}
-          onBackupJSON={handleBackupJSON}
-          onRestoreJSON={handleRestoreJSON}
-          onRecalculatePageValues={handleRecalculateSheet}
-          onRecalculateAllData={handleRecalculateAllData}
-          onOpenGoogleCalendar={() => setIsCalendarModalOpen(true)}
-          onForceCloudSync={handleForceCloudSync}
-          onOpenRangeReport={() => setIsRangeReportOpen(true)}
-          onOpenBulkExport={() => setIsBulkExportOpen(true)}
-          onOpenStaffModal={() => setIsStaffModalOpen(true)}
-          authUser={authUser}
-          onLogin={handleLogin}
-          onLogout={handleLogout}
-          cloudStatus={cloudStatus}
-          onHideHeader={activeTab === 'sheet' ? () => setIsHeaderHiddenOnSheet(true) : undefined}
           records={records}
           selectedYear={selectedFinancialYear}
           onSelectYear={handleSelectFinancialYear}
           financialYearFormat={financialYearFormat}
           onChangeFinancialYearFormat={setFinancialYearFormat}
+          authUser={authUser}
+          cloudStatus={cloudStatus}
+          onHideHeader={activeTab === 'sheet' ? () => setIsHeaderHiddenOnSheet(true) : undefined}
+          isSecurityProtected={securityConfig.isEnabled && !!securityConfig.passwordHash}
+          onLockAppNow={handleLockAppNow}
+          auditCount={auditLogs.length}
         />
       )}
 
       {/* Main Content Area */}
       <main className="flex-1 bg-[#f4f4f2] text-black w-full min-w-0 p-1 sm:p-2.5 md:p-3.5 print:bg-white print:p-0 print:m-0 print:overflow-visible">
         {/* Monthly Summary Dashboard Card - displayed when on archive/weekly or when main header is expanded */}
-        {(activeTab !== 'sheet' || !isHeaderHiddenOnSheet) && (
+        {(activeTab !== 'sheet' || !isHeaderHiddenOnSheet) && activeTab !== 'monthly' && activeTab !== 'audit' && activeTab !== 'menu' && (
           <div className="mb-4 sm:mb-6 print:hidden">
-          <div className="bg-white border-2 border-black p-3.5 sm:p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] rounded-none flex flex-col md:flex-row md:items-center justify-between gap-4 w-full max-w-full ml-0 mr-auto">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-amber-400 border-2 border-black text-black shrink-0 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                <TrendingUp className="w-6 h-6" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] sm:text-xs font-mono font-bold uppercase tracking-wider text-zinc-700 bg-amber-100/80 px-2 py-0.5 border border-black">
-                    {monthDisplayName}
-                  </span>
-                  <span className="text-[10px] font-mono text-zinc-600 font-medium">
-                    ({monthDaysCount} {monthDaysCount === 1 ? 'day' : 'days'} logged)
-                  </span>
+          <div className="bg-white border-2 border-black p-3.5 sm:p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] rounded-none flex flex-col xl:flex-row xl:items-center justify-between gap-4 w-full max-w-full ml-0 mr-auto">
+            <div className="flex flex-wrap items-center gap-4 sm:gap-6">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-400 border-2 border-black text-black shrink-0 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
+                  <TrendingUp className="w-6 h-6" />
                 </div>
-                <h2 className="text-base sm:text-lg font-black text-black tracking-tight mt-0.5">
-                  Monthly Cashing Up Dashboard
-                </h2>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] sm:text-xs font-mono font-bold uppercase tracking-wider text-zinc-700 bg-amber-100/80 px-2 py-0.5 border border-black">
+                      {monthDisplayName}
+                    </span>
+                    <span className="text-[10px] font-mono text-zinc-600 font-medium">
+                      ({monthDaysCount} {monthDaysCount === 1 ? 'day' : 'days'} logged)
+                    </span>
+                  </div>
+                  <h2 className="text-base sm:text-lg font-black text-black tracking-tight mt-0.5">
+                    Monthly Cashing Up Dashboard
+                  </h2>
+                </div>
               </div>
+
+              {/* Day Total Field Copy (Col 3 Sys Total from current active day sheet) */}
+              {currentRecord && currentRecordTotals && (
+                <div
+                  id="top-dashboard-day-total"
+                  className="flex items-center gap-2.5 bg-zinc-50 border-2 border-black p-2 sm:p-2.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] shrink-0"
+                  title={`Live Day Total for ${formatToUKDate(currentRecord.date)} (Sys Total Col 3)`}
+                >
+                  <div className="flex flex-col">
+                    <div className="text-[10px] font-mono font-black uppercase text-zinc-700 flex items-center gap-1.5 tracking-tight">
+                      <span className="bg-amber-400 text-slate-950 font-mono font-black text-[9px] px-1 border border-black rounded-xs">
+                        D
+                      </span>
+                      <span>Day Total (Sys 3)</span>
+                      <span className="text-zinc-500 font-normal">
+                        ({formatToUKDate(currentRecord.date)})
+                      </span>
+                    </div>
+                    <div className="bg-amber-100 border-2 border-slate-900 rounded px-3 py-1 mt-1 text-right font-black text-slate-900 text-base sm:text-xl font-mono shadow-xs">
+                      {formatCurrency(currentRecordTotals.totalCol3Expected)}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Week Total Field Copy (Col 3 Sys Total for calendar week of active day sheet) */}
+              {currentRecord && currentWeekInfo && (
+                <div
+                  id="top-dashboard-week-total"
+                  className="flex items-center gap-2.5 bg-zinc-50 border-2 border-black p-2 sm:p-2.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] shrink-0 cursor-pointer hover:bg-amber-50/60 transition-colors"
+                  onClick={() => setActiveTab('weekly')}
+                  title={`Live Week Total for ${currentWeekInfo.label} (${currentWeekDaysCount} ${currentWeekDaysCount === 1 ? 'day' : 'days'} logged, Sys Total Col 3) - Click to view Weekly Report`}
+                >
+                  <div className="flex flex-col">
+                    <div className="text-[10px] font-mono font-black uppercase text-zinc-700 flex items-center gap-1.5 tracking-tight">
+                      <span className="bg-amber-400 text-slate-950 font-mono font-black text-[9px] px-1 border border-black rounded-xs">
+                        W
+                      </span>
+                      <span>Week Total (Sys 3)</span>
+                      <span className="text-zinc-500 font-normal">
+                        ({currentWeekInfo.mondayUK.slice(0, 5)}–{currentWeekInfo.sundayUK.slice(0, 5)})
+                      </span>
+                    </div>
+                    <div className="bg-amber-100 border-2 border-slate-900 rounded px-3 py-1 mt-1 text-right font-black text-slate-900 text-base sm:text-xl font-mono shadow-xs">
+                      {formatCurrency(currentWeekSys3Total)}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Key Metrics Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 border-t-2 md:border-t-0 md:border-l-2 border-black pt-3 md:pt-0 md:pl-5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 border-t-2 xl:border-t-0 xl:border-l-2 border-black pt-3 xl:pt-0 xl:pl-5">
               {/* Metric 1: Monthly Total Revenue */}
               <div className="bg-zinc-50 border-2 border-black p-2.5 sm:p-3 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
                 <div className="text-[10px] font-mono font-bold uppercase text-zinc-600 flex items-center gap-1">
@@ -969,10 +1724,14 @@ export default function App() {
                 onAddRecord={handleAddNewRecord}
                 onDeleteRecord={handleDeleteActiveRecord}
                 onOpenWeeklyReport={() => setActiveTab('weekly')}
+                onOpenMonthlyReport={() => setActiveTab('monthly')}
                 onExportExcel={handleExportCurrentCSV}
                 onPrevRecord={handlePrevRecord}
                 onNextRecord={handleNextRecord}
                 onOpenRecordsList={() => setActiveTab('records')}
+                onGoToDate={handleGoToDate}
+                onUndo={handleUndo}
+                canUndo={undoStack.length > 0}
                 operators={operators}
                 onAddOperator={handleAddOperator}
                 onDeleteOperator={handleDeleteOperator}
@@ -982,6 +1741,7 @@ export default function App() {
                 onSelectYear={handleSelectFinancialYear}
                 financialYearFormat={financialYearFormat}
                 onChangeFinancialYearFormat={setFinancialYearFormat}
+                onBackupJSON={handleBackupJSON}
               />
             ) : (
               <ModernSheetForm
@@ -992,10 +1752,14 @@ export default function App() {
                 onAddRecord={handleAddNewRecord}
                 onDeleteRecord={handleDeleteActiveRecord}
                 onOpenWeeklyReport={() => setActiveTab('weekly')}
+                onOpenMonthlyReport={() => setActiveTab('monthly')}
                 onExportExcel={handleExportCurrentCSV}
                 onPrevRecord={handlePrevRecord}
                 onNextRecord={handleNextRecord}
                 onOpenRecordsList={() => setActiveTab('records')}
+                onGoToDate={handleGoToDate}
+                onUndo={handleUndo}
+                canUndo={undoStack.length > 0}
                 operators={operators}
                 onAddOperator={handleAddOperator}
                 onDeleteOperator={handleDeleteOperator}
@@ -1005,6 +1769,7 @@ export default function App() {
                 onSelectYear={handleSelectFinancialYear}
                 financialYearFormat={financialYearFormat}
                 onChangeFinancialYearFormat={setFinancialYearFormat}
+                onBackupJSON={handleBackupJSON}
               />
             )}
           </>
@@ -1023,6 +1788,7 @@ export default function App() {
             operators={operators}
             onOpenRangeReport={() => setIsRangeReportOpen(true)}
             onRecalculateAllData={handleRecalculateAllData}
+            onBackupJSON={handleBackupJSON}
             selectedYear={selectedFinancialYear}
             onSelectYear={handleSelectFinancialYear}
             financialYearFormat={financialYearFormat}
@@ -1039,13 +1805,101 @@ export default function App() {
               setActiveTab('sheet');
             }}
             onOpenRangeReport={() => setIsRangeReportOpen(true)}
+            onOpenMonthlyReport={() => setActiveTab('monthly')}
             selectedYear={selectedFinancialYear}
             onSelectYear={handleSelectFinancialYear}
             financialYearFormat={financialYearFormat}
             onChangeFinancialYearFormat={setFinancialYearFormat}
           />
         )}
+
+        {activeTab === 'monthly' && (
+          <MonthlyReportView
+            records={records}
+            onBackToSheet={() => setActiveTab('sheet')}
+            onSelectRecord={(id) => {
+              setActiveRecordId(id);
+              setActiveTab('sheet');
+            }}
+            operators={operators}
+            selectedYear={selectedFinancialYear}
+            onSelectYear={handleSelectFinancialYear}
+            financialYearFormat={financialYearFormat}
+            onChangeFinancialYearFormat={setFinancialYearFormat}
+          />
+        )}
+
+        {activeTab === 'audit' && (
+          <AuditLogView
+            logs={auditLogs}
+            records={records}
+            onBackToSheet={() => setActiveTab('sheet')}
+            onSelectRecord={(id) => {
+              setActiveRecordId(id);
+              setActiveTab('sheet');
+            }}
+            onClearHistory={() => {
+              if (window.confirm('Are you sure you want to clear the local audit log history?')) {
+                setAuditLogs([]);
+              }
+            }}
+          />
+        )}
+
+        {activeTab === 'menu' && (
+          <MenuView
+            records={records}
+            recordCount={records.length}
+            auditCount={auditLogs.length}
+            operators={operators}
+            onBackToSheet={() => setActiveTab('sheet')}
+            onChangeActiveTab={setActiveTab}
+            onBackupJSON={handleBackupJSON}
+            onRestoreJSON={handleRestoreJSON}
+            onRecalculateAllData={handleRecalculateAllData}
+            onResetSampleData={handleResetSampleData}
+            onForceCloudSync={handleForceCloudSync}
+            onOpenGoogleCalendar={() => setIsCalendarModalOpen(true)}
+            onOpenRangeReport={() => setIsRangeReportOpen(true)}
+            onOpenBulkExport={() => setIsBulkExportOpen(true)}
+            onOpenStaffModal={() => setIsStaffModalOpen(true)}
+            onOpenShareModal={() => setIsShareModalOpen(true)}
+            onOpenBackupModal={() => setIsBackupModalOpen(true)}
+            authUser={authUser}
+            onLogin={handleLogin}
+            onLogout={handleLogout}
+            cloudStatus={cloudStatus}
+            isSecurityProtected={securityConfig.isEnabled && !!securityConfig.passwordHash}
+            onOpenSecurityModal={() => setIsSecurityModalOpen(true)}
+            onLockAppNow={handleLockAppNow}
+            selectedYear={selectedFinancialYear}
+            onSelectYear={handleSelectFinancialYear}
+            financialYearFormat={financialYearFormat}
+            onChangeFinancialYearFormat={setFinancialYearFormat}
+            viewMode={viewMode}
+            onChangeViewMode={setViewMode}
+          />
+        )}
       </main>
+
+      {/* Mobile / Android App Link Modal */}
+      <ShareAppModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+      />
+
+      {/* Advanced Backup & Cloud Restore Modal */}
+      <BackupModal
+        isOpen={isBackupModalOpen}
+        onClose={() => setIsBackupModalOpen(false)}
+        recordCount={records.length}
+        onBackupJSON={handleBackupJSON}
+        onRestoreJSON={handleRestoreJSON}
+        onResetSampleData={handleResetSampleData}
+        onForceCloudSync={handleForceCloudSync}
+        onOpenBulkExport={() => setIsBulkExportOpen(true)}
+        onRecalculateAllData={handleRecalculateAllData}
+      />
 
       {/* Standalone Global Staff / Operator Database Modal */}
       <OperatorModal
@@ -1100,6 +1954,24 @@ export default function App() {
         onClose={() => setIsBulkExportOpen(false)}
         records={records}
       />
+
+      {/* Security & Password Protection Settings Modal */}
+      <SecuritySettingsModal
+        isOpen={isSecurityModalOpen}
+        onClose={() => setIsSecurityModalOpen(false)}
+        config={securityConfig}
+        onSaveConfig={handleSaveSecurityConfig}
+        onLockNow={handleLockAppNow}
+      />
+
+      {/* Master App Lock Screen Overlay (Active when app is locked) */}
+      {isAppLocked && (
+        <LockScreen
+          config={securityConfig}
+          onUnlock={handleUnlockApp}
+          onSaveConfig={handleSaveSecurityConfig}
+        />
+      )}
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
 } from "../utils/calculations";
 import { exportDaySheetToPDF } from "../utils/pdfExport";
 import { generateRecordQrDataUrl } from "../utils/qrCode";
+import { triggerBrowserPrint, openPrintableTab } from "../utils/printHelper";
 import {
   Printer,
   ExternalLink,
@@ -499,11 +500,11 @@ export const DaySheetPrintModal: React.FC<DaySheetPrintModalProps> = ({
             )}
 
             <button
-              onClick={() => {
-                try {
-                  window.print();
-                } catch (e) {
-                  console.warn(e);
+              onClick={async () => {
+                const html = generateHtml(qrCodeDataUrl);
+                const printed = await triggerBrowserPrint(html);
+                if (!printed) {
+                  openPrintableTab(html);
                 }
               }}
               className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 bg-black hover:bg-zinc-800 text-white font-bold text-xs uppercase tracking-wider px-4 py-2.5 border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer"

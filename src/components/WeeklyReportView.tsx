@@ -39,8 +39,11 @@ import {
   Download,
   X,
   Activity,
+  Loader2,
 } from 'lucide-react';
 import { FinancialYearSwitcher, FinancialYearFormat } from './FinancialYearSwitcher';
+import { exportWeeklyReportToPDF } from '../utils/pdfExport';
+import { triggerBrowserPrint, openPrintableTab } from '../utils/printHelper';
 
 interface WeeklyReportViewProps {
   records: SheetRecord[];
@@ -51,6 +54,7 @@ interface WeeklyReportViewProps {
   onBackToSheet: () => void;
   onSelectRecord: (id: string) => void;
   onOpenRangeReport?: () => void;
+  onOpenMonthlyReport?: () => void;
 }
 
 export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
@@ -62,6 +66,7 @@ export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
   onBackToSheet,
   onSelectRecord,
   onOpenRangeReport,
+  onOpenMonthlyReport,
 }) => {
   // Filter records by selected financial year if applicable
   const displayRecords = useMemo(() => {
@@ -295,17 +300,43 @@ export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
 </html>`;
   };
 
-  const handlePrint = () => {
+  const [isExportingPDF, setIsExportingPDF] = useState(false);
+
+  const handleExportPDF = async () => {
+    setIsExportingPDF(true);
+    try {
+      await exportWeeklyReportToPDF({
+        mondayStr: activeWeek.mondayUK,
+        sundayStr: activeWeek.sundayUK,
+        records: currentWeekRecords,
+        allRecords: records,
+        totals: {
+          totalCol1Cash: currentWeekRecords.reduce((a, r) => a + calculateGrandTotals(r.rows, r, records).totalCol1Cash, 0),
+          totalCol2Card: currentWeekRecords.reduce((a, r) => a + calculateGrandTotals(r.rows, r, records).totalCol2Card, 0),
+          totalCol3Expected: weeklyExpectedSum,
+          totalCol4Banking: weeklyBankingSum,
+          totalCol6Card: weeklyCardSum,
+          totalCol7Actual: weeklyActualSum,
+          totalVariance: weeklyVarianceSum,
+        },
+      });
+    } catch (err) {
+      console.error('Failed to export weekly PDF:', err);
+    } finally {
+      setIsExportingPDF(false);
+    }
+  };
+
+  const handlePrint = async () => {
     const html = generatePrintHtml();
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     setPrintBlobUrl(url);
     setIsPrintModalOpen(true);
 
-    try {
-      window.print();
-    } catch (e) {
-      console.warn('Direct print blocked by sandbox:', e);
+    const printed = await triggerBrowserPrint(html);
+    if (!printed) {
+      console.warn('Direct print blocked by sandbox');
     }
   };
 
@@ -434,6 +465,17 @@ export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
             >
               <Printer className="w-4 h-4 text-black" />
               Date Range Report
+            </button>
+          )}
+
+          {onOpenMonthlyReport && (
+            <button
+              onClick={onOpenMonthlyReport}
+              className="flex items-center gap-1.5 bg-white hover:bg-zinc-100 text-black font-extrabold text-xs uppercase tracking-wider px-3.5 py-2 border-2 border-black transition-all cursor-pointer shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
+              title="Open Monthly Report with Custom Date Range"
+            >
+              <Calendar className="w-4 h-4 text-black" />
+              Monthly Report
             </button>
           )}
         </div>
@@ -838,17 +880,31 @@ export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
                 )}
 
                 <button
-                  onClick={() => {
-                    try {
-                      window.print();
-                    } catch (e) {
-                      console.warn(e);
+                  onClick={async () => {
+                    const html = generatePrintHtml();
+                    const printed = await triggerBrowserPrint(html);
+                    if (!printed) {
+                      openPrintableTab(html);
                     }
                   }}
                   className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 bg-black hover:bg-zinc-800 text-white font-bold text-xs uppercase tracking-wider px-4 py-2.5 border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer"
                 >
                   <Printer className="w-4 h-4 text-amber-400" />
                   Print (Ctrl+P)
+                </button>
+
+                <button
+                  onClick={handleExportPDF}
+                  disabled={isExportingPDF}
+                  className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 bg-white hover:bg-zinc-100 text-black font-bold text-xs uppercase tracking-wider px-4 py-2.5 border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer disabled:opacity-50"
+                  title="Download PDF directly"
+                >
+                  {isExportingPDF ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-amber-600" />
+                  ) : (
+                    <Download className="w-4 h-4 text-amber-600" />
+                  )}
+                  <span>{isExportingPDF ? 'Generating PDF...' : 'Download PDF'}</span>
                 </button>
 
                 {printBlobUrl && (
@@ -858,7 +914,7 @@ export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
                     className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 bg-zinc-100 hover:bg-zinc-200 text-black font-bold text-xs uppercase tracking-wider px-3.5 py-2.5 border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all cursor-pointer"
                   >
                     <Download className="w-4 h-4" />
-                    Download File
+                    Download HTML
                   </a>
                 )}
               </div>

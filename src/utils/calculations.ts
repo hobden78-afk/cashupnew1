@@ -249,7 +249,30 @@ export function recalculateAllRecords(records: SheetRecord[]): SheetRecord[] {
     const rec = chronological[i];
     const prevRec = i > 0 ? recalculated[i - 1] : undefined;
 
-    const updatedRows = (rec.rows || []).map((row) => {
+    // Ensure all standard tills exist in the record (including Till 5)
+    let currentRows = [...(rec.rows || [])];
+    const hasTill5 = currentRows.some(
+      (r) => r.id === 'till-5' || (r.name && r.name.toLowerCase() === 'till 5')
+    );
+    if (!hasTill5) {
+      const till5Row: TillRowData = {
+        id: 'till-5',
+        name: 'Till 5',
+        col1ExpectedCash: 0,
+        col2ExpectedCard: 0,
+        col4BankingCash: 0,
+        col5FloatCash: 0,
+        col6ActualCard: 0,
+      };
+      const yardIdx = currentRows.findIndex((r) => r.isYard);
+      if (yardIdx !== -1) {
+        currentRows.splice(yardIdx, 0, till5Row);
+      } else {
+        currentRows.push(till5Row);
+      }
+    }
+
+    const updatedRows = currentRows.map((row) => {
       if (row.isYard) {
         return {
           ...row,
@@ -273,7 +296,9 @@ export function recalculateAllRecords(records: SheetRecord[]): SheetRecord[] {
 
       let prevFloat = row.prevFloat;
       if (prevRec && prevRec.rows) {
-        const prevRow = prevRec.rows.find((pr) => pr.id === row.id || pr.name === row.name);
+        const prevRow = prevRec.rows.find(
+          (pr) => pr.id === row.id || (pr.name && row.name && pr.name.toLowerCase() === row.name.toLowerCase())
+        );
         if (prevRow) {
           prevFloat = Number(Number(prevRow.col5FloatCash || 0).toFixed(2));
         }
@@ -443,7 +468,9 @@ export function getYesterdayFloat(
   const sorted = sortRecordsByDate(allRecords);
   const prevRecord = sorted.find((r) => r.date < record.date);
   if (!prevRecord) return 0;
-  const prevRow = prevRecord.rows.find((pr) => pr.id === row.id || pr.name === row.name);
+  const prevRow = prevRecord.rows.find(
+    (pr) => pr.id === row.id || pr.name === row.name || (pr.name && row.name && pr.name.toLowerCase() === row.name.toLowerCase())
+  );
   return prevRow ? prevRow.col5FloatCash || 0 : 0;
 }
 

@@ -29,6 +29,7 @@ import {
   Coins,
   ArrowUpDown,
   SlidersHorizontal,
+  Download,
 } from 'lucide-react';
 import { FinancialYearSwitcher, FinancialYearFormat } from './FinancialYearSwitcher';
 
@@ -45,6 +46,7 @@ interface RecordsListProps {
   operators?: string[];
   onOpenRangeReport?: () => void;
   onRecalculateAllData?: () => void;
+  onBackupJSON?: () => void;
 }
 
 type RevenuePreset = 'all' | 'under1k' | '1k-2.5k' | '2.5k-5k' | 'over5k' | 'custom';
@@ -63,6 +65,7 @@ export const RecordsList: React.FC<RecordsListProps> = ({
   operators = [],
   onOpenRangeReport,
   onRecalculateAllData,
+  onBackupJSON,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterVariance, setFilterVariance] = useState<'all' | 'over' | 'short' | 'balanced'>('all');
@@ -373,6 +376,17 @@ export const RecordsList: React.FC<RecordsListProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          {onBackupJSON && (
+            <button
+              onClick={onBackupJSON}
+              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs uppercase tracking-wider px-3.5 py-2 border-2 border-black transition-all cursor-pointer shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
+              title="Backup all daily sheets and staff roster immediately to a JSON file"
+            >
+              <Download className="w-4 h-4 text-white" />
+              Backup Data
+            </button>
+          )}
+
           <button
             onClick={onNewRecord}
             className="flex items-center gap-1.5 bg-black hover:bg-zinc-800 text-white font-bold text-xs uppercase tracking-wider px-3.5 py-2 border-2 border-black transition-all cursor-pointer"

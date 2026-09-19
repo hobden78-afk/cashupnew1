@@ -24,6 +24,7 @@ import {
   User,
   Layers,
 } from 'lucide-react';
+import { triggerBrowserPrint, openPrintableTab } from '../utils/printHelper';
 
 interface DateRangeReportModalProps {
   isOpen: boolean;
@@ -890,16 +891,14 @@ export const DateRangeReportModal: React.FC<DateRangeReportModalProps> = ({
                   </a>
                 )}
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     const html = generateRangeReportHtml();
-                    const win = window.open('', '_blank');
-                    if (win) {
-                      win.document.write(html);
-                      win.document.close();
-                      win.print();
+                    const printed = await triggerBrowserPrint(html);
+                    if (!printed) {
+                      openPrintableTab(html);
                     }
                   }}
-                  className="flex items-center gap-1 bg-amber-400 hover:bg-amber-300 text-black border border-black px-3 py-1 rounded-xs text-xs font-extrabold"
+                  className="flex items-center gap-1 bg-amber-400 hover:bg-amber-300 text-black border border-black px-3 py-1 rounded-xs text-xs font-extrabold cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5" />
                   <span>Print (Ctrl+P)</span>

@@ -30,12 +30,15 @@ import {
   Loader2,
   Calendar,
   Receipt,
+  Undo2,
+  Download,
 } from "lucide-react";
 import { CashCalculatorModal, TargetFieldType } from "./CashCalculatorModal";
 import { OperatorModal } from "./OperatorModal";
 import { DaySheetPrintModal } from "./DaySheetPrintModal";
 import { ThermalReceiptModal } from "./ThermalReceiptModal";
 import { DecimalInput } from "./DecimalInput";
+import { GoToDateModal } from "./GoToDateModal";
 import {
   FinancialYearSwitcher,
   FinancialYearFormat,
@@ -53,15 +56,20 @@ interface DeltaSheetFormProps {
   onAddRecord: () => void;
   onDeleteRecord: () => void;
   onOpenWeeklyReport: () => void;
+  onOpenMonthlyReport?: () => void;
   onExportExcel: () => void;
   onPrevRecord: () => void;
   onNextRecord: () => void;
   onOpenRecordsList: () => void;
+  onGoToDate?: (date: string) => void;
+  onUndo?: () => void;
+  canUndo?: boolean;
   operators: string[];
   onAddOperator: (name: string) => void;
   onDeleteOperator: (name: string) => void;
   onEditOperator?: (oldName: string, newName: string) => void;
   onRecalculatePageValues?: () => void;
+  onBackupJSON?: () => void;
 }
 
 export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
@@ -76,15 +84,20 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
   onAddRecord,
   onDeleteRecord,
   onOpenWeeklyReport,
+  onOpenMonthlyReport,
   onExportExcel,
   onPrevRecord,
   onNextRecord,
   onOpenRecordsList,
+  onGoToDate,
+  onUndo,
+  canUndo = false,
   operators = [],
   onAddOperator,
   onDeleteOperator,
   onEditOperator,
   onRecalculatePageValues,
+  onBackupJSON,
 }) => {
   const [calcModalOpen, setCalcModalOpen] = useState(false);
   const [selectedTillIndex, setSelectedTillIndex] = useState<number | null>(
@@ -99,6 +112,7 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [isThermalModalOpen, setIsThermalModalOpen] = useState(false);
   const [isExportingPDF, setIsExportingPDF] = useState(false);
+  const [isGoToDateModalOpen, setIsGoToDateModalOpen] = useState(false);
 
   const handleExportPDF = async () => {
     setIsExportingPDF(true);
@@ -239,36 +253,74 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
     <div className="w-full bg-[#b4c5d8] min-h-[calc(100vh-4rem)] p-1 sm:p-3 lg:p-4 text-slate-800 font-sans flex flex-col items-stretch select-none shadow-inner">
       {/* Container simulating Delta Access Form */}
       <div className="w-full max-w-full bg-[#b4c5d8] rounded-md p-1 sm:p-2">
-        {/* Date Row Header & Mobile View Switcher */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 sm:mb-6 bg-[#cbd7e6] p-2.5 sm:p-3 rounded-lg border border-slate-400">
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <label className="text-[#334155] font-bold text-base sm:text-lg flex items-center gap-1.5">
+        {/* Automatic Print Summary Header */}
+        <div className="hidden print:block print-summary-header">
+          <div className="print-summary-header-top">
+            <div>
+              <div className="print-summary-brand">Retail Operations • Till Cashing &amp; Reconciliation</div>
+              <h1 className="print-summary-title">Daily Till Cashing Sheet</h1>
+              <div className="print-summary-subtitle">Official Daily Cash Register Audit, Float Verification &amp; Card Settlement</div>
+            </div>
+            <div className="print-summary-meta-box">
+              <div className="print-summary-badge">Financial Year: {getFinancialYear(record.date, financialYearFormat)}</div>
+              <div className="text-[7.5pt] font-mono text-zinc-700 mt-1">
+                Record ID: <strong>{record.id}</strong> | Status: <strong>{record.isSaved ? "LOCKED AUDIT" : "ACTIVE"}</strong>
+              </div>
+            </div>
+          </div>
+          <div className="print-summary-details-grid">
+            <div className="print-summary-detail-item">
+              <span className="print-summary-detail-label">Trading Date</span>
+              <span className="print-summary-detail-value">{formatToUKDate(record.date)}</span>
+            </div>
+            <div className="print-summary-detail-item">
+              <span className="print-summary-detail-label">Cashier / Operator</span>
+              <span className="print-summary-detail-value">{record.operator || "Unassigned Staff"}</span>
+            </div>
+            <div className="print-summary-detail-item">
+              <span className="print-summary-detail-label">Registers / Tills</span>
+              <span className="print-summary-detail-value">{record.rows.length} Tills Active</span>
+            </div>
+            <div className="print-summary-detail-item">
+              <span className="print-summary-detail-label">Generated / Printed</span>
+              <span className="print-summary-detail-value">{new Date().toLocaleDateString("en-GB")} {new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Compact Single-Row Date, Operator & Actions Toolbar */}
+        <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2 mb-2 sm:mb-3 bg-[#cbd7e6] p-1.5 sm:p-2 rounded-lg border border-slate-400">
+          {/* Left Group: Date & Operator */}
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {/* Date Input */}
+            <div className="flex items-center gap-1.5">
               <span className="bg-slate-800 text-amber-300 font-mono text-xs px-1.5 py-0.5 rounded font-black border border-slate-600 shadow-xs">
                 A
               </span>
-              Date
-            </label>
-            <div className="bg-[#eef5cd] border border-slate-400 px-2.5 py-1 rounded shadow-xs flex items-center gap-1.5">
-              <input
-                type="date"
-                disabled={isLocked}
-                value={record.date}
-                onChange={(e) => handleDateChange(e.target.value)}
-                className="bg-transparent font-bold text-[#4d7328] text-base sm:text-lg focus:outline-none disabled:opacity-80 cursor-pointer"
-              />
-              <span
-                className="text-[10px] font-mono font-black px-1.5 py-0.5 bg-slate-900 text-amber-300 rounded border border-slate-700 shadow-xs"
-                title="Financial Year for this record date"
-              >
-                {getFinancialYear(record.date, financialYearFormat)}
-              </span>
+              <span className="text-[#334155] font-bold text-xs sm:text-sm">Date:</span>
+              <div className="bg-[#eef5cd] border border-slate-400 px-2 py-0.5 rounded shadow-xs flex items-center gap-1">
+                <input
+                  type="date"
+                  disabled={isLocked}
+                  value={record.date}
+                  onChange={(e) => handleDateChange(e.target.value)}
+                  className="bg-transparent font-bold text-[#4d7328] text-xs sm:text-sm focus:outline-none disabled:opacity-80 cursor-pointer"
+                />
+                <span
+                  className="text-[9px] font-mono font-black px-1.5 py-0.5 bg-slate-900 text-amber-300 rounded border border-slate-700 shadow-xs"
+                  title="Financial Year for this record date"
+                >
+                  {getFinancialYear(record.date, financialYearFormat)}
+                </span>
+              </div>
             </div>
-            {/* Operator Database Field */}
-            <div className="flex items-center gap-1.5 bg-white/80 border border-slate-400 px-2.5 py-1 rounded shadow-xs ml-0 sm:ml-2">
-              <User className="w-4 h-4 text-slate-700 shrink-0" />
-              <label className="text-slate-800 font-bold text-xs sm:text-sm whitespace-nowrap">
+
+            {/* Operator Select & Staff Button */}
+            <div className="flex items-center gap-1.5 bg-white/90 border border-slate-400 px-2 py-0.5 rounded shadow-xs">
+              <User className="w-3.5 h-3.5 text-slate-700 shrink-0" />
+              <span className="text-slate-800 font-bold text-xs whitespace-nowrap hidden sm:inline">
                 Operator:
-              </label>
+              </span>
               <select
                 disabled={isLocked}
                 value={record.operator || ""}
@@ -279,9 +331,9 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                     onChangeRecord({ ...record, operator: e.target.value });
                   }
                 }}
-                className="bg-transparent font-bold text-slate-900 text-xs sm:text-sm focus:outline-none cursor-pointer disabled:opacity-80 max-w-[160px] truncate"
+                className="bg-transparent font-bold text-slate-900 text-xs focus:outline-none cursor-pointer disabled:opacity-80 max-w-[130px] truncate"
               >
-                <option value="">-- Select Operator --</option>
+                <option value="">-- Operator --</option>
                 {operators.map((op) => (
                   <option key={op} value={op}>
                     {op}
@@ -291,132 +343,141 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                   value="__MANAGE_OPERATORS__"
                   className="font-bold text-amber-900 bg-amber-100"
                 >
-                  ⚙️ Manage Operators...
+                  ⚙️ Manage...
                 </option>
               </select>
 
               <button
                 type="button"
                 onClick={() => setIsOperatorModalOpen(true)}
-                className="flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-[11px] px-2 py-0.5 rounded border border-slate-600 cursor-pointer transition-colors shrink-0 ml-1"
+                className="flex items-center gap-0.5 bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-[10px] px-1.5 py-0.5 rounded border border-slate-600 cursor-pointer transition-colors shrink-0"
                 title="Edit staff roster and operators list"
               >
-                <Users className="w-3 h-3 text-amber-400" />
-                Edit Staff
+                <Users className="w-2.5 h-2.5 text-amber-400" />
+                Staff
               </button>
             </div>
+          </div>
 
-            {/* Recalculate Button */}
+          {/* Right Group: Action Buttons in a Tidy Unified Bar */}
+          <div className="flex items-center flex-wrap sm:flex-nowrap gap-1.5 ml-auto">
+            {/* Recalculate Page Values */}
             {onRecalculatePageValues && (
               <button
                 onClick={onRecalculatePageValues}
-                className="flex items-center gap-1.5 bg-amber-400 hover:bg-amber-300 text-black font-extrabold text-xs px-3 py-1.5 rounded border-2 border-slate-800 shadow-xs cursor-pointer active:scale-95 transition-all ml-0 sm:ml-1"
+                className="flex items-center gap-1 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs px-2 py-1 rounded border border-slate-800 shadow-xs cursor-pointer active:scale-95 transition-all"
                 title="Recalculate all row totals and page variances"
               >
-                <RefreshCw className="w-3.5 h-3.5 text-black" />
-                Recalculate Page Values
+                <RefreshCw className="w-3 h-3 text-slate-950" />
+                <span>Recalc</span>
               </button>
             )}
 
-            {/* Export PDF Button (jsPDF) */}
-            <button
-              onClick={handleExportPDF}
-              disabled={isExportingPDF}
-              className="flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-70 text-white font-extrabold text-xs px-3 py-1.5 rounded border-2 border-emerald-950 shadow-xs cursor-pointer active:scale-95 transition-all"
-              title="Export current day sheet to PDF using jsPDF (print media query styled)"
-            >
-              {isExportingPDF ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <FileText className="w-3.5 h-3.5 text-emerald-300" />
-                  Export PDF
-                </>
-              )}
-            </button>
-
-            {/* Print Day Page Button */}
-            <button
-              onClick={() => setIsPrintModalOpen(true)}
-              className="flex items-center gap-1.5 bg-black hover:bg-zinc-800 text-white font-extrabold text-xs px-3 py-1.5 rounded border-2 border-amber-400 shadow-xs cursor-pointer active:scale-95 transition-all"
-              title="Print current day cashing sheet"
-            >
-              <Printer className="w-3.5 h-3.5 text-amber-400" />
-              Print / Preview
-            </button>
-
-            {/* Print-Friendly Thermal View Button */}
-            <button
-              type="button"
-              onClick={() => setIsThermalModalOpen(true)}
-              className="flex items-center gap-1.5 bg-amber-400 hover:bg-amber-300 text-black font-extrabold text-xs px-3 py-1.5 rounded border-2 border-slate-900 shadow-xs cursor-pointer active:scale-95 transition-all"
-              title="Open Print-Friendly View cleaned up specifically for quick POS thermal printer output (essential fields only)"
-            >
-              <Receipt className="w-3.5 h-3.5 text-black" />
-              <span>Print-Friendly View</span>
-            </button>
-
-            {/* Desktop Calculator Toolbar Button */}
+            {/* Desktop Calculator */}
             <button
               onClick={() => {
                 setSelectedTillIndex(0);
                 setCalcTargetField("col1ExpectedCash");
                 setCalcModalOpen(true);
               }}
-              className="flex items-center gap-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs px-3 py-1.5 rounded border-2 border-slate-900 shadow-xs cursor-pointer active:scale-95 transition-all"
-              title="Open Desktop Calculator"
+              className="flex items-center gap-1 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs px-2 py-1 rounded border border-slate-800 shadow-xs cursor-pointer active:scale-95 transition-all"
+              title="Open Desktop Till Calculator"
             >
-              <Calculator className="w-3.5 h-3.5 text-slate-950" />
-              Calculator
+              <Calculator className="w-3 h-3 text-slate-950" />
+              <span>Calc</span>
             </button>
-          </div>
 
-          <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto">
+            {/* Print & Export Segmented Group */}
+            <div className="flex items-center bg-slate-900 rounded border border-slate-700 p-0.5 shadow-xs">
+              <button
+                onClick={() => setIsPrintModalOpen(true)}
+                className="flex items-center gap-1 px-2 py-0.5 text-xs font-bold text-amber-300 hover:text-white hover:bg-slate-800 rounded transition-colors cursor-pointer"
+                title="Print full daily cashing sheet"
+              >
+                <Printer className="w-3 h-3 text-amber-400" />
+                <span>Print</span>
+              </button>
+              <span className="w-px h-3.5 bg-slate-700" />
+              <button
+                type="button"
+                onClick={() => setIsThermalModalOpen(true)}
+                className="flex items-center gap-1 px-2 py-0.5 text-xs font-bold text-amber-300 hover:text-white hover:bg-slate-800 rounded transition-colors cursor-pointer"
+                title="Print-friendly slip for thermal POS printer"
+              >
+                <Receipt className="w-3 h-3 text-amber-400" />
+                <span>Slip</span>
+              </button>
+              <span className="w-px h-3.5 bg-slate-700" />
+              <button
+                onClick={handleExportPDF}
+                disabled={isExportingPDF}
+                className="flex items-center gap-1 px-2 py-0.5 text-xs font-bold text-emerald-400 hover:text-emerald-300 hover:bg-slate-800 rounded transition-colors cursor-pointer disabled:opacity-50"
+                title="Export current day sheet to PDF"
+              >
+                {isExportingPDF ? (
+                  <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
+                ) : (
+                  <FileText className="w-3 h-3 text-emerald-400" />
+                )}
+                <span>PDF</span>
+              </button>
+            </div>
+
+            {/* Quick Backup Button */}
+            {onBackupJSON && (
+              <button
+                type="button"
+                onClick={onBackupJSON}
+                className="flex items-center gap-1 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs px-2 py-1 rounded border border-emerald-950 shadow-xs cursor-pointer active:scale-95 transition-all"
+                title="Quick backup to JSON file"
+              >
+                <Download className="w-3 h-3 text-white shrink-0" />
+                <span>Backup</span>
+              </button>
+            )}
+
             {/* Mobile Cards / Table Switcher (Visible on mobile screens) */}
             <div className="flex md:hidden items-center bg-slate-800 p-0.5 rounded border border-slate-700 text-xs">
               <button
                 onClick={() => setMobileViewMode("cards")}
-                className={`px-2.5 py-1 rounded font-bold uppercase transition-all cursor-pointer ${
+                className={`px-2 py-0.5 rounded font-bold uppercase transition-all cursor-pointer ${
                   mobileViewMode === "cards"
                     ? "bg-amber-400 text-black shadow-xs"
                     : "text-slate-300 hover:text-white"
                 }`}
               >
-                📱 Mobile Cards
+                📱 Cards
               </button>
               <button
                 onClick={() => setMobileViewMode("table")}
-                className={`px-2.5 py-1 rounded font-bold uppercase transition-all cursor-pointer ${
+                className={`px-2 py-0.5 rounded font-bold uppercase transition-all cursor-pointer ${
                   mobileViewMode === "table"
                     ? "bg-amber-400 text-black shadow-xs"
                     : "text-slate-300 hover:text-white"
                 }`}
               >
-                📊 Full Table
+                📊 Table
               </button>
             </div>
 
-            {isLocked ? (
-              <div className="flex items-center gap-1.5 bg-amber-100 border border-amber-400 text-amber-900 px-2.5 py-1 rounded-md text-xs font-semibold">
-                <Lock className="w-3.5 h-3.5 text-amber-700" />
-                Locked
-                <button
-                  onClick={toggleLock}
-                  title="Unlock to make edits"
-                  className="underline text-blue-700 hover:text-blue-900 ml-1 cursor-pointer font-bold"
-                >
-                  Unlock
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5 text-xs text-slate-700 bg-white/80 px-2.5 py-1 rounded border border-slate-300 font-semibold">
-                <Unlock className="w-3.5 h-3.5 text-emerald-600" />
-                Editable
-              </div>
-            )}
+            {/* Status indicator (Locked/Editable) */}
+            <div className={`flex items-center gap-1 text-xs px-2 py-1 rounded font-bold border ${
+              isLocked 
+                ? "bg-amber-100/95 border-amber-400 text-amber-900" 
+                : "bg-white/90 border-slate-300 text-slate-700"
+            }`}>
+              {isLocked ? (
+                <>
+                  <Lock className="w-3 h-3 text-amber-700" />
+                  <span>Locked</span>
+                </>
+              ) : (
+                <>
+                  <Unlock className="w-3 h-3 text-emerald-600" />
+                  <span>Editable</span>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
@@ -794,7 +855,7 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
         <div
           className={`${mobileViewMode === "table" ? "block" : "hidden md:block"} w-full overflow-x-auto pb-3`}
         >
-          <div className="w-full min-w-0">
+          <div className="w-fit min-w-full">
             {/* Column Reference Header Bar with Letter Identifiers [B] to [I] */}
             <div className="flex items-center gap-1.5 lg:gap-2 mb-2 text-slate-800 font-bold text-xs">
               <div className="w-20 shrink-0 text-slate-700 font-black tracking-wider uppercase text-[11px] px-1">
@@ -802,7 +863,7 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
               </div>
 
               {/* Col 1 */}
-              <div className="flex-1 min-w-0 text-center bg-slate-800 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-600">
+              <div className="w-32 sm:w-36 md:w-40 shrink-0 text-center bg-slate-800 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-600">
                 <span className="bg-amber-400 text-slate-950 font-mono font-black text-[10px] px-1 rounded shrink-0">
                   B
                 </span>
@@ -811,7 +872,7 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                 </span>
               </div>
               {/* Col 2 */}
-              <div className="flex-1 min-w-0 text-center bg-slate-800 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-600">
+              <div className="w-28 sm:w-32 shrink-0 text-center bg-slate-800 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-600">
                 <span className="bg-amber-400 text-slate-950 font-mono font-black text-[10px] px-1 rounded shrink-0">
                   C
                 </span>
@@ -820,7 +881,7 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                 </span>
               </div>
               {/* Col 3 */}
-              <div className="flex-1 min-w-0 text-center bg-slate-900 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-500">
+              <div className="w-28 sm:w-32 shrink-0 text-center bg-slate-900 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-500">
                 <span className="bg-amber-400 text-slate-950 font-mono font-black text-[10px] px-1 rounded shrink-0">
                   D
                 </span>
@@ -833,14 +894,14 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
               <div className="w-1 mx-0.5 shrink-0" />
 
               {/* Col 4 */}
-              <div className="flex-1 min-w-0 text-center bg-slate-800 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-600">
+              <div className="w-28 sm:w-32 shrink-0 text-center bg-slate-800 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-600">
                 <span className="bg-amber-400 text-slate-950 font-mono font-black text-[10px] px-1 rounded shrink-0">
                   E
                 </span>
                 <span className="truncate font-black text-xs">Banking (4)</span>
               </div>
               {/* Col 5 */}
-              <div className="flex-1 min-w-0 text-center bg-slate-800 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-600">
+              <div className="w-28 sm:w-32 shrink-0 text-center bg-slate-800 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-600">
                 <span className="bg-amber-400 text-slate-950 font-mono font-black text-[10px] px-1 rounded shrink-0">
                   F
                 </span>
@@ -849,7 +910,7 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                 </span>
               </div>
               {/* Col 6 */}
-              <div className="flex-1 min-w-0 text-center bg-slate-800 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-600">
+              <div className="w-28 sm:w-32 shrink-0 text-center bg-slate-800 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-600">
                 <span className="bg-amber-400 text-slate-950 font-mono font-black text-[10px] px-1 rounded shrink-0">
                   G
                 </span>
@@ -858,7 +919,7 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                 </span>
               </div>
               {/* Col 7 */}
-              <div className="flex-1 min-w-0 text-center bg-slate-900 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-500">
+              <div className="w-28 sm:w-32 shrink-0 text-center bg-slate-900 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-500">
                 <span className="bg-amber-400 text-slate-950 font-mono font-black text-[10px] px-1 rounded shrink-0">
                   H
                 </span>
@@ -867,11 +928,11 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                 </span>
               </div>
               {/* Col 8 */}
-              <div className="flex-[1.25] min-w-0 text-center bg-slate-800 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-600">
+              <div className="w-28 sm:w-32 md:w-36 shrink-0 text-center bg-slate-800 text-white rounded py-1 px-1 flex items-center justify-center gap-1 shadow-xs border border-slate-600">
                 <span className="bg-amber-400 text-slate-950 font-mono font-black text-[10px] px-1 rounded shrink-0">
                   I
                 </span>
-                <span className="truncate font-black text-xs">
+                <span className="truncate font-black text-[11px] sm:text-xs">
                   Variance (8)
                 </span>
               </div>
@@ -899,7 +960,7 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                   );
                 }
 
-                // Normal Till Rows (Till 1, Till 2, Till 3, Till 4)
+                // Normal Till Rows (Till 1, Till 2, Till 3, Till 4, Till 5)
                 const expTotal = getRowExpectedTotal(row);
                 const actTotal = getRowActualTotal(row);
                 const variance = getRowVariance(row, record, allRecords);
@@ -917,7 +978,7 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                     </div>
 
                     {/* Col 1: System Cash */}
-                    <div className="flex-1 min-w-0 flex flex-col justify-center gap-0.5">
+                    <div className="w-32 sm:w-36 md:w-40 shrink-0 flex flex-col justify-center gap-0.5">
                       <div className="flex items-center gap-1">
                         <div className="bg-white border-2 border-slate-400 rounded px-1.5 sm:px-2 py-0.5 shadow-inner flex items-center flex-1 min-w-0">
                           <span className="text-slate-500 font-bold mr-0.5 text-xs sm:text-sm">
@@ -968,7 +1029,7 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                     </div>
 
                     {/* Col 2: System Card */}
-                    <div className="flex items-center gap-1 flex-1 min-w-0">
+                    <div className="flex items-center gap-1 w-28 sm:w-32 shrink-0">
                       <div className="bg-white border-2 border-slate-400 rounded px-1.5 sm:px-2 py-1 flex-1 min-w-0 shadow-inner flex items-center">
                         <span className="text-slate-500 font-bold mr-0.5 text-xs sm:text-sm">
                           £
@@ -990,15 +1051,15 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                             handleOpenCalcForField(idx, "col2ExpectedCard")
                           }
                           title="Open Slips Adder / Calculator for Sys Card (2)"
-                          className="bg-amber-400 hover:bg-amber-300 text-slate-950 p-1 sm:p-1.5 rounded border border-slate-700 active:scale-95 transition-all cursor-pointer shadow-xs shrink-0 flex items-center justify-center"
+                          className="bg-amber-400 hover:bg-amber-300 text-slate-950 p-0.5 sm:p-1 rounded border border-slate-700 active:scale-95 transition-all cursor-pointer shadow-xs shrink-0 flex items-center justify-center"
                         >
-                          <Calculator className="w-3.5 h-3.5" />
+                          <Calculator className="w-3 h-3" />
                         </button>
                       )}
                     </div>
 
                     {/* Col 3: System Total (Calculated) */}
-                    <div className="bg-[#dcdcdc] border-2 border-slate-400 rounded px-1.5 sm:px-2 py-1 flex-1 min-w-0 shadow-xs text-right font-black text-slate-800 text-sm sm:text-base lg:text-lg truncate">
+                    <div className="bg-[#dcdcdc] border-2 border-slate-400 rounded px-1.5 sm:px-2 py-1 w-28 sm:w-32 shrink-0 shadow-xs text-right font-black text-slate-800 text-sm sm:text-base lg:text-lg truncate">
                       {formatCurrency(expTotal)}
                     </div>
 
@@ -1006,7 +1067,7 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                     <div className="h-10 w-1 bg-black mx-0.5 rounded-full shrink-0 shadow-xs" />
 
                     {/* Col 4: Banking Cash */}
-                    <div className="flex items-center gap-1 flex-1 min-w-0">
+                    <div className="flex items-center gap-1 w-28 sm:w-32 shrink-0">
                       <div className="bg-white border-2 border-slate-400 rounded px-1.5 sm:px-2 py-1 flex-1 min-w-0 shadow-inner flex items-center">
                         <span className="text-slate-500 font-bold mr-0.5 text-xs sm:text-sm">
                           £
@@ -1028,15 +1089,15 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                             handleOpenCalcForField(idx, "col4BankingCash")
                           }
                           title="Count Cash for Banking (4)"
-                          className="bg-amber-400 hover:bg-amber-300 text-slate-950 p-1 sm:p-1.5 rounded border border-slate-700 active:scale-95 transition-all cursor-pointer shadow-xs shrink-0 flex items-center justify-center"
+                          className="bg-amber-400 hover:bg-amber-300 text-slate-950 p-0.5 sm:p-1 rounded border border-slate-700 active:scale-95 transition-all cursor-pointer shadow-xs shrink-0 flex items-center justify-center"
                         >
-                          <Calculator className="w-3.5 h-3.5" />
+                          <Calculator className="w-3 h-3" />
                         </button>
                       )}
                     </div>
 
                     {/* Col 5: Float Cash */}
-                    <div className="flex items-center gap-1 flex-1 min-w-0">
+                    <div className="flex items-center gap-1 w-28 sm:w-32 shrink-0">
                       <div className="bg-white border-2 border-slate-400 rounded px-1.5 sm:px-2 py-1 flex-1 min-w-0 shadow-inner flex items-center">
                         <span className="text-slate-500 font-bold mr-0.5 text-xs sm:text-sm">
                           £
@@ -1058,15 +1119,15 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                             handleOpenCalcForField(idx, "col5FloatCash")
                           }
                           title="Count Cash for Float (5)"
-                          className="bg-amber-400 hover:bg-amber-300 text-slate-950 p-1 sm:p-1.5 rounded border border-slate-700 active:scale-95 transition-all cursor-pointer shadow-xs shrink-0 flex items-center justify-center"
+                          className="bg-amber-400 hover:bg-amber-300 text-slate-950 p-0.5 sm:p-1 rounded border border-slate-700 active:scale-95 transition-all cursor-pointer shadow-xs shrink-0 flex items-center justify-center"
                         >
-                          <Calculator className="w-3.5 h-3.5" />
+                          <Calculator className="w-3 h-3" />
                         </button>
                       )}
                     </div>
 
                     {/* Col 6: Actual Card */}
-                    <div className="bg-[#dcdcdc] border-2 border-slate-400 rounded px-1.5 sm:px-2 py-1 flex-1 min-w-0 shadow-inner flex items-center">
+                    <div className="bg-[#dcdcdc] border-2 border-slate-400 rounded px-1.5 sm:px-2 py-1 w-28 sm:w-32 shrink-0 shadow-inner flex items-center">
                       <span className="text-slate-500 font-bold mr-0.5 text-xs sm:text-sm">
                         £
                       </span>
@@ -1082,13 +1143,13 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                     </div>
 
                     {/* Col 7: Actual Total (Calculated) */}
-                    <div className="bg-[#dcdcdc] border-2 border-slate-400 rounded px-1.5 sm:px-2 py-1 flex-1 min-w-0 shadow-xs text-right font-black text-slate-800 text-sm sm:text-base lg:text-lg truncate">
+                    <div className="bg-[#dcdcdc] border-2 border-slate-400 rounded px-1.5 sm:px-2 py-1 w-28 sm:w-32 shrink-0 shadow-xs text-right font-black text-slate-800 text-sm sm:text-base lg:text-lg truncate">
                       {formatCurrency(actTotal)}
                     </div>
 
                     {/* Col 8: Variance Difference */}
                     <div
-                      className={`border-2 border-slate-400 rounded px-1.5 sm:px-2 py-1 flex-[1.25] min-w-0 shadow-xs text-right font-black text-xs sm:text-sm flex items-center justify-between gap-1 ${
+                      className={`border-2 border-slate-400 rounded px-1.5 sm:px-2 py-1 w-28 sm:w-32 md:w-36 shrink-0 shadow-xs text-right font-black text-xs sm:text-sm flex items-center justify-between gap-1 ${
                         variance < 0
                           ? "bg-[#eef5cd] text-red-600"
                           : variance > 0
@@ -1137,13 +1198,13 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                 </div>
 
                 {/* Left Totals */}
-                <div className="bg-white border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 flex-1 min-w-0 text-right font-black text-slate-900 text-xs sm:text-sm lg:text-base font-mono shadow-xs truncate">
+                <div className="bg-white border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 w-32 sm:w-36 md:w-40 shrink-0 text-right font-black text-slate-900 text-xs sm:text-sm lg:text-base font-mono shadow-xs truncate">
                   {formatCurrency(totals.totalCol1Cash)}
                 </div>
-                <div className="bg-white border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 flex-1 min-w-0 text-right font-black text-slate-900 text-xs sm:text-sm lg:text-base font-mono shadow-xs truncate">
+                <div className="bg-white border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 w-28 sm:w-32 shrink-0 text-right font-black text-slate-900 text-xs sm:text-sm lg:text-base font-mono shadow-xs truncate">
                   {formatCurrency(totals.totalCol2Card)}
                 </div>
-                <div className="bg-amber-100 border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 flex-1 min-w-0 text-right font-black text-slate-900 text-xs sm:text-sm lg:text-base font-mono shadow-xs truncate">
+                <div className="bg-amber-100 border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 w-28 sm:w-32 shrink-0 text-right font-black text-slate-900 text-xs sm:text-sm lg:text-base font-mono shadow-xs truncate">
                   {formatCurrency(totals.totalCol3Expected)}
                 </div>
 
@@ -1151,22 +1212,22 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                 <div className="w-1 mx-0.5 shrink-0" />
 
                 {/* Right Totals */}
-                <div className="bg-white border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 flex-1 min-w-0 text-right font-black text-slate-900 text-xs sm:text-sm lg:text-base font-mono shadow-xs truncate">
+                <div className="bg-white border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 w-28 sm:w-32 shrink-0 text-right font-black text-slate-900 text-xs sm:text-sm lg:text-base font-mono shadow-xs truncate">
                   {formatCurrency(totals.totalCol4Banking)}
                 </div>
-                <div className="bg-white border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 flex-1 min-w-0 text-right font-black text-slate-900 text-xs sm:text-sm lg:text-base font-mono shadow-xs truncate">
+                <div className="bg-white border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 w-28 sm:w-32 shrink-0 text-right font-black text-slate-900 text-xs sm:text-sm lg:text-base font-mono shadow-xs truncate">
                   {formatCurrency(totals.totalCol5Float)}
                 </div>
-                <div className="bg-white border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 flex-1 min-w-0 text-right font-black text-slate-900 text-xs sm:text-sm lg:text-base font-mono shadow-xs truncate">
+                <div className="bg-white border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 w-28 sm:w-32 shrink-0 text-right font-black text-slate-900 text-xs sm:text-sm lg:text-base font-mono shadow-xs truncate">
                   {formatCurrency(totals.totalCol6Card)}
                 </div>
-                <div className="bg-amber-100 border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 flex-1 min-w-0 text-right font-black text-slate-900 text-xs sm:text-sm lg:text-base font-mono shadow-xs truncate">
+                <div className="bg-amber-100 border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 w-28 sm:w-32 shrink-0 text-right font-black text-slate-900 text-xs sm:text-sm lg:text-base font-mono shadow-xs truncate">
                   {formatCurrency(totals.totalCol7Actual)}
                 </div>
                 {/* Col 8 Variance Total Box */}
                 <div
                   data-total-variance="true"
-                  className={`border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 flex-[1.25] min-w-0 text-right font-black text-xs sm:text-sm flex items-center justify-between gap-1 shadow-xs total-variance-highlight ${
+                  className={`border-2 border-slate-900 rounded px-1.5 sm:px-2 py-1.5 w-28 sm:w-32 md:w-36 shrink-0 text-right font-black text-xs sm:text-sm flex items-center justify-between gap-1 shadow-xs total-variance-highlight ${
                     totals.totalVariance < 0
                       ? "bg-rose-100 text-rose-950 border-rose-900"
                       : totals.totalVariance > 0
@@ -1261,6 +1322,65 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
               Save Sheet
             </button>
 
+            {/* Undo Changes Button */}
+            <button
+              type="button"
+              onClick={onUndo}
+              disabled={!canUndo}
+              className={`col-span-2 sm:col-span-1 font-black text-xs sm:text-sm px-3.5 py-2.5 rounded-md border-2 shadow-md active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                canUndo
+                  ? "bg-amber-100 hover:bg-amber-200 text-amber-950 border-amber-500"
+                  : "bg-slate-100 text-slate-400 border-slate-300 opacity-60 cursor-not-allowed"
+              }`}
+              title={
+                canUndo
+                  ? "Undo recent changes on this sheet (Ctrl+Z)"
+                  : "No changes to undo"
+              }
+            >
+              <Undo2 className="w-4 h-4 text-slate-800 shrink-0" />
+              <span>Undo Changes</span>
+            </button>
+
+            {/* Lock / Unlock Toggle Button */}
+            <button
+              type="button"
+              onClick={toggleLock}
+              className={`col-span-2 sm:col-span-1 font-black text-xs sm:text-sm px-3.5 py-2.5 rounded-md border-2 shadow-md active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                isLocked
+                  ? "bg-amber-400 hover:bg-amber-300 text-black border-slate-900"
+                  : "bg-white hover:bg-emerald-50 text-slate-900 border-slate-400"
+              }`}
+              title={
+                isLocked
+                  ? "Sheet is Locked. Click to Unlock for edits."
+                  : "Sheet is Unlocked. Click to Lock and prevent edits."
+              }
+            >
+              {isLocked ? (
+                <>
+                  <Lock className="w-4 h-4 text-black shrink-0" />
+                  <span>Locked (Unlock)</span>
+                </>
+              ) : (
+                <>
+                  <Unlock className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Unlocked (Lock)</span>
+                </>
+              )}
+            </button>
+
+            {/* Date Goto Button */}
+            <button
+              type="button"
+              onClick={() => setIsGoToDateModalOpen(true)}
+              className="col-span-2 sm:col-span-1 bg-black hover:bg-zinc-800 text-amber-400 font-black text-xs sm:text-sm px-3.5 py-2.5 rounded-md border-2 border-amber-400 shadow-md active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              title="Jump directly to any date sheet or select from calendar"
+            >
+              <Calendar className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>Go to Date</span>
+            </button>
+
             {/* Add Record Button */}
             <button
               onClick={onAddRecord}
@@ -1293,6 +1413,17 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
               Weekly Report
             </button>
 
+            {/* Monthly Report with Date Range */}
+            {onOpenMonthlyReport && (
+              <button
+                onClick={onOpenMonthlyReport}
+                className="bg-[#80d0ff] hover:bg-[#68c5ff] text-slate-900 font-extrabold text-xs px-3 py-2 rounded border border-blue-400 shadow-xs active:scale-95 transition-all cursor-pointer text-center"
+                title="Open Monthly Report with Custom Date Range"
+              >
+                Monthly Report
+              </button>
+            )}
+
             {/* Print Day Page */}
             <button
               onClick={() => setIsPrintModalOpen(true)}
@@ -1320,6 +1451,19 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
             >
               Export CSV
             </button>
+
+            {/* Backup Button (Green) */}
+            {onBackupJSON && (
+              <button
+                type="button"
+                onClick={onBackupJSON}
+                className="col-span-2 sm:col-span-1 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs px-3 py-2 rounded border-2 border-emerald-950 shadow-xs active:scale-95 transition-all cursor-pointer text-center flex items-center justify-center gap-1.5"
+                title="Backup all daily records & staff data immediately to JSON file"
+              >
+                <Download className="w-3.5 h-3.5 text-white shrink-0" />
+                <span>Backup Data</span>
+              </button>
+            )}
 
             {/* Navigation Arrows */}
             <div className="flex items-center justify-center gap-1.5 col-span-2 sm:col-span-1">
@@ -1391,53 +1535,79 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
         </div>
 
         {/* Physical Filing Verification & Approval Footer (Print Only) */}
-        <div className="hidden print:flex print-filing-footer items-end justify-between gap-4">
-          <div className="print-sign-line">
-            Operator Signature
-            <div className="text-[8pt] text-slate-600 font-normal">
-              {record.operator || "Staff Member"}
+        <div className="hidden print:flex print-signature-block">
+          <div className="print-signature-grid">
+            {/* Operator Signature Box */}
+            <div className="print-signature-box">
+              <div className="print-signature-box-header">
+                <span>1. Cashier / Operator</span>
+                <span>Till Count Certification</span>
+              </div>
+              <div className="text-[7pt] text-slate-500 mb-3">
+                I certify that all cash drawer counts, safe takings, and card terminal batch records are accurate.
+              </div>
+              <div className="print-sign-line">
+                <div>Signature: ___________________________</div>
+                <div className="print-sign-meta">Name: {record.operator || "Staff Member"} | Date: {formatToUKDate(record.date)}</div>
+              </div>
             </div>
-          </div>
 
-          <div className="flex items-center gap-3 border-2 border-slate-900 p-2 bg-slate-100">
-            <RecordAuditQrCode
-              record={record}
-              totals={totals}
-              size={60}
-              showCaption={false}
-              className="border-none shadow-none p-0 bg-transparent"
-            />
-            <div
-              className="print-audit-stamp border-none p-0 bg-transparent text-left"
-              data-total-variance="true"
-            >
-              <div>
-                TOTAL VARIANCE:{" "}
-                <span className="font-mono text-sm font-black">
+            {/* Shift Supervisor Box */}
+            <div className="print-signature-box">
+              <div className="print-signature-box-header">
+                <span>2. Shift Supervisor</span>
+                <span>Safe Drop &amp; Float Witness</span>
+              </div>
+              <div className="text-[7pt] text-slate-500 mb-3">
+                Physical floats, opening balance consistency, and cash banking envelopes witnessed and verified.
+              </div>
+              <div className="print-sign-line">
+                <div>Signature: ___________________________</div>
+                <div className="print-sign-meta">Witness Name: _________________ | Date: ___/___/______</div>
+              </div>
+            </div>
+
+            {/* Store Manager / Auditor Box */}
+            <div className="print-signature-box">
+              <div className="print-signature-box-header">
+                <span>3. Manager / Auditor</span>
+                <span>Reconciliation Sign-Off</span>
+              </div>
+              <div className="text-[7pt] text-slate-500 mb-3">
+                Financial audit complete. Daily register balance variance of {formatCurrency(totals.totalVariance, true)} reviewed and posted.
+              </div>
+              <div className="print-sign-line">
+                <div>Signature: ___________________________</div>
+                <div className="print-sign-meta">Manager Name: _________________ | Date: ___/___/______</div>
+              </div>
+            </div>
+
+            {/* Audit Stamp & QR Code Card */}
+            <div className="print-audit-stamp-card">
+              <RecordAuditQrCode
+                record={record}
+                totals={totals}
+                size={56}
+                showCaption={false}
+                className="border-none shadow-none p-0 bg-transparent"
+              />
+              <div className="print-audit-stamp border-none p-0 bg-transparent text-left" data-total-variance="true">
+                <div className="text-[6.5pt] font-mono text-slate-500 uppercase tracking-wider">Net Day Variance</div>
+                <div className="font-mono text-sm font-black text-black">
                   {formatCurrency(totals.totalVariance, true)}
-                </span>
-              </div>
-              <div className="text-[7.5pt] font-mono text-slate-700">
-                ID: <strong>{record.id}</strong> | Status:{" "}
-                <strong>
-                  {totals.totalVariance < 0
-                    ? "SHORT"
-                    : totals.totalVariance > 0
-                      ? "OVER"
-                      : "BALANCED"}
-                </strong>
-              </div>
-              <div className="text-[6.5pt] uppercase tracking-wider text-slate-600 mt-0.5">
-                Digital Verification QR Code
+                </div>
+                <div className="text-[7pt] font-mono text-slate-700 mt-0.5">
+                  ID: <strong>{record.id}</strong>
+                </div>
+                <div className="inline-block mt-1 px-1.5 py-0.5 bg-black text-white text-[7pt] font-mono font-black uppercase">
+                  {totals.totalVariance < 0 ? "SHORT" : totals.totalVariance > 0 ? "OVER" : "BALANCED"}
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="print-sign-line">
-            Manager / Auditor Approval
-            <div className="text-[8pt] text-slate-600 font-normal">
-              Date & Signature
-            </div>
+          <div className="print-compliance-statement">
+            Official Till Cashing &amp; Reconciliation Record • Retain for Statutory Audit &amp; Accounting Compliance
           </div>
         </div>
 
@@ -1495,6 +1665,22 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
         onClose={() => setIsThermalModalOpen(false)}
         record={record}
         allRecords={allRecords}
+        financialYearFormat={financialYearFormat}
+      />
+
+      {/* Date Go To Jump Modal */}
+      <GoToDateModal
+        isOpen={isGoToDateModalOpen}
+        onClose={() => setIsGoToDateModalOpen(false)}
+        currentDate={record.date}
+        records={allRecords}
+        onSelectDate={(targetDate) => {
+          if (onGoToDate) {
+            onGoToDate(targetDate);
+          } else {
+            handleDateChange(targetDate);
+          }
+        }}
         financialYearFormat={financialYearFormat}
       />
     </div>

@@ -9,17 +9,20 @@ import {
   getDocs,
   writeBatch
 } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
-import { SheetRecord } from '../types';
+import firebaseConfig from './firebaseConfig';
+import { SheetRecord, AuditLogEntry } from '../types';
+import { SecurityConfig } from '../utils/security';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-const dbId = (firebaseConfig as Record<string, string>).firestoreDatabaseId;
+const dbId = firebaseConfig.firestoreDatabaseId;
 export const db = dbId ? getFirestore(app, dbId) : getFirestore(app);
 
 export const RECORDS_COLLECTION = 'till_records';
 export const SETTINGS_COLLECTION = 'till_settings';
+export const AUDIT_COLLECTION = 'till_audit_logs';
 export const OPERATORS_DOC = 'operators_list';
+export const SECURITY_DOC = 'app_security';
 
 const saveDebounceTimers = new Map<string, any>();
 const pendingRecordsToSave = new Map<string, SheetRecord>();
@@ -129,6 +132,16 @@ export async function saveOperatorsToCloud(operators: string[]) {
   }
 }
 
+// Save security configuration to Firestore
+export async function saveSecurityConfigToCloud(config: SecurityConfig) {
+  try {
+    const docRef = doc(db, SETTINGS_COLLECTION, SECURITY_DOC);
+    await setDoc(docRef, { ...config, updatedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error('Error saving security config to Firebase Cloud:', err);
+  }
+}
+
 // Bulk sync/seed records to Firestore (e.g. on restore JSON or initial seed)
 export async function syncAllRecordsToCloud(records: SheetRecord[]) {
   try {
@@ -142,3 +155,28 @@ export async function syncAllRecordsToCloud(records: SheetRecord[]) {
     console.error('Error syncing records batch to Firebase Cloud:', err);
   }
 }
+
+// Save a single audit log entry to Firestore
+export async function saveAuditEntryToCloud(entry: AuditLogEntry) {
+  try {
+    const docRef = doc(db, AUDIT_COLLECTION, entry.id);
+    await setDoc(docRef, entry);
+  } catch (err) {
+    console.warn('Notice: Error saving audit entry to Cloud:', err);
+  }
+}
+
+// Bulk sync/seed audit log entries to Firestore
+export async function syncAuditLogsToCloud(entries: AuditLogEntry[]) {
+  try {
+    const batch = writeBatch(db);
+    entries.slice(0, 400).forEach((entry) => {
+      const docRef = doc(db, AUDIT_COLLECTION, entry.id);
+      batch.set(docRef, entry);
+    });
+    await batch.commit();
+  } catch (err) {
+    console.warn('Notice: Error syncing audit logs batch to Cloud:', err);
+  }
+}
+

@@ -1,6 +1,6 @@
 export interface TillRowData {
   id: string;
-  name: string; // e.g. "Till 1", "Till 2", "Till 3", "Till 4", "YARD"
+  name: string; // e.g. "Till 1", "Till 2", "Till 3", "Till 4", "Till 5", "YARD"
   isYard?: boolean; // Yard row might only have variance or specific fields
   col1ExpectedCash: number; // Col 1: System Cash Takings
   col2ExpectedCard: number; // Col 2: System Card Takings
@@ -49,4 +49,33 @@ export interface DenominationCounts {
 }
 
 export type ViewMode = 'classic' | 'modern';
-export type ActiveTab = 'sheet' | 'records' | 'weekly';
+export type ActiveTab = 'sheet' | 'records' | 'weekly' | 'monthly' | 'audit' | 'menu';
+
+export interface AuditChangeDetail {
+  field: string;         // e.g. "Till 2 Card PDQ", "Cashier / Operator", "Shift Notes", "Status"
+  oldValue: string;      // e.g. "£1,200.00", "Unassigned"
+  newValue: string;      // e.g. "£1,250.00", "Sarah H."
+  delta?: string;        // e.g. "+£50.00"
+}
+
+export type AuditActionType =
+  | 'edit'
+  | 'create'
+  | 'delete'
+  | 'lock'
+  | 'unlock'
+  | 'restore'
+  | 'recalculate';
+
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string;     // ISO 8601 string
+  recordId: string;      // Associated SheetRecord ID
+  recordDate: string;    // Sheet date in YYYY-MM-DD
+  user: string;          // Operator name, cashier, or signed-in user name
+  userEmail?: string;    // Signed-in user email if available
+  actionType: AuditActionType;
+  summary: string;       // Human-readable summary of the modification
+  changes?: AuditChangeDetail[]; // Detailed field-by-field diff
+}
+

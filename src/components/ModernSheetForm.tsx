@@ -37,12 +37,15 @@ import {
   Loader2,
   Calendar,
   Receipt,
+  Undo2,
+  Download,
 } from "lucide-react";
 import { DecimalInput } from "./DecimalInput";
 import { CashCalculatorModal, TargetFieldType } from "./CashCalculatorModal";
 import { OperatorModal } from "./OperatorModal";
 import { DaySheetPrintModal } from "./DaySheetPrintModal";
 import { ThermalReceiptModal } from "./ThermalReceiptModal";
+import { GoToDateModal } from "./GoToDateModal";
 import { FinancialYearFormat } from "./FinancialYearSwitcher";
 
 interface ModernSheetFormProps {
@@ -57,15 +60,20 @@ interface ModernSheetFormProps {
   onAddRecord: () => void;
   onDeleteRecord: () => void;
   onOpenWeeklyReport: () => void;
+  onOpenMonthlyReport?: () => void;
   onExportExcel: () => void;
   onPrevRecord: () => void;
   onNextRecord: () => void;
   onOpenRecordsList: () => void;
+  onGoToDate?: (date: string) => void;
+  onUndo?: () => void;
+  canUndo?: boolean;
   operators: string[];
   onAddOperator: (name: string) => void;
   onDeleteOperator: (name: string) => void;
   onEditOperator?: (oldName: string, newName: string) => void;
   onRecalculatePageValues?: () => void;
+  onBackupJSON?: () => void;
 }
 
 export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
@@ -80,15 +88,20 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
   onAddRecord,
   onDeleteRecord,
   onOpenWeeklyReport,
+  onOpenMonthlyReport,
   onExportExcel,
   onPrevRecord,
   onNextRecord,
   onOpenRecordsList,
+  onGoToDate,
+  onUndo,
+  canUndo = false,
   operators = [],
   onAddOperator,
   onDeleteOperator,
   onEditOperator,
   onRecalculatePageValues,
+  onBackupJSON,
 }) => {
   const [calcModalOpen, setCalcModalOpen] = useState(false);
   const [selectedTillIndex, setSelectedTillIndex] = useState<number | null>(
@@ -103,6 +116,7 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [isThermalModalOpen, setIsThermalModalOpen] = useState(false);
   const [isExportingPDF, setIsExportingPDF] = useState(false);
+  const [isGoToDateModalOpen, setIsGoToDateModalOpen] = useState(false);
 
   const handleExportPDF = async () => {
     setIsExportingPDF(true);
@@ -117,6 +131,13 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
 
   const totals = calculateGrandTotals(record.rows, record, allRecords);
   const isLocked = record.isSaved;
+
+  const toggleLock = () => {
+    onChangeRecord({
+      ...record,
+      isSaved: !record.isSaved,
+    });
+  };
 
   const handleRowValueChange = (
     index: number,
@@ -222,6 +243,41 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
 
   return (
     <div className="w-full max-w-full ml-0 mr-auto p-2 sm:p-4 lg:p-6 space-y-4 sm:space-y-6">
+      {/* Automatic Print Summary Header */}
+      <div className="hidden print:block print-summary-header">
+        <div className="print-summary-header-top">
+          <div>
+            <div className="print-summary-brand">Retail Operations • Till Cashing &amp; Reconciliation</div>
+            <h1 className="print-summary-title">Daily Till Reconciliation Report</h1>
+            <div className="print-summary-subtitle">Official Daily Cash Register Audit, Float Verification &amp; Card Settlement</div>
+          </div>
+          <div className="print-summary-meta-box">
+            <div className="print-summary-badge">Financial Year: {getFinancialYear(record.date, financialYearFormat)}</div>
+            <div className="text-[7.5pt] font-mono text-zinc-700 mt-1">
+              Record ID: <strong>{record.id}</strong> | Status: <strong>{record.isSaved ? "LOCKED AUDIT" : "ACTIVE"}</strong>
+            </div>
+          </div>
+        </div>
+        <div className="print-summary-details-grid">
+          <div className="print-summary-detail-item">
+            <span className="print-summary-detail-label">Trading Date</span>
+            <span className="print-summary-detail-value">{formatToUKDate(record.date)}</span>
+          </div>
+          <div className="print-summary-detail-item">
+            <span className="print-summary-detail-label">Cashier / Operator</span>
+            <span className="print-summary-detail-value">{record.operator || "Unassigned Staff"}</span>
+          </div>
+          <div className="print-summary-detail-item">
+            <span className="print-summary-detail-label">Registers / Tills</span>
+            <span className="print-summary-detail-value">{record.rows.length} Tills Active</span>
+          </div>
+          <div className="print-summary-detail-item">
+            <span className="print-summary-detail-label">Generated / Printed</span>
+            <span className="print-summary-detail-value">{new Date().toLocaleDateString("en-GB")} {new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</span>
+          </div>
+        </div>
+      </div>
+
       {/* Editorial Title Banner */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between border-b-2 border-black pb-4 gap-4">
         <div>
@@ -298,73 +354,18 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
             </button>
           </div>
 
-          <span
-            className={`text-xs px-3 py-1.5 font-bold uppercase tracking-wider border-2 ${
-              isLocked
-                ? "bg-amber-400 border-black text-black"
-                : "bg-black border-black text-white"
-            } flex items-center gap-1.5`}
-          >
-            {isLocked ? (
-              <Lock className="w-3.5 h-3.5" />
-            ) : (
-              <Unlock className="w-3.5 h-3.5" />
-            )}
-            {isLocked ? "Locked" : "Draft"}
-          </span>
-
+        <div className="flex flex-wrap items-center gap-1.5 ml-auto">
           {/* Recalculate Page Values Button */}
           {onRecalculatePageValues && (
             <button
               onClick={onRecalculatePageValues}
-              className="flex items-center gap-1.5 bg-amber-400 hover:bg-amber-300 text-black font-extrabold text-xs px-3 py-1.5 border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer"
+              className="flex items-center gap-1 bg-amber-400 hover:bg-amber-300 text-black font-bold text-xs px-2 py-1 border-2 border-black shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer"
               title="Recalculate all row totals and page variances"
             >
               <RefreshCw className="w-3 h-3 text-black" />
-              Recalculate Page Values
+              Recalc
             </button>
           )}
-
-          {/* Export PDF Button (jsPDF) */}
-          <button
-            onClick={handleExportPDF}
-            disabled={isExportingPDF}
-            className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-75 text-white font-extrabold text-xs px-3 py-1.5 border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer"
-            title="Export current day sheet to PDF using jsPDF (print media query styled)"
-          >
-            {isExportingPDF ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                Generating...
-              </>
-            ) : (
-              <>
-                <FileText className="w-3.5 h-3.5 text-white" />
-                Export PDF
-              </>
-            )}
-          </button>
-
-          {/* Print Day Page Button */}
-          <button
-            onClick={() => setIsPrintModalOpen(true)}
-            className="flex items-center gap-1.5 bg-black hover:bg-zinc-800 text-white font-extrabold text-xs px-3 py-1.5 border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer"
-            title="Print current day sheet"
-          >
-            <Printer className="w-3.5 h-3.5 text-amber-400" />
-            Print / Preview
-          </button>
-
-          {/* Print-Friendly Thermal View Button */}
-          <button
-            type="button"
-            onClick={() => setIsThermalModalOpen(true)}
-            className="flex items-center gap-1.5 bg-amber-400 hover:bg-amber-300 text-black font-extrabold text-xs px-3 py-1.5 border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer"
-            title="Open Print-Friendly View cleaned up specifically for quick POS thermal printer output (essential fields only)"
-          >
-            <Receipt className="w-3.5 h-3.5 text-black" />
-            <span>Print-Friendly View</span>
-          </button>
 
           {/* Desktop Calculator Toolbar Button */}
           <button
@@ -373,12 +374,78 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
               setCalcTargetField("col1ExpectedCash");
               setCalcModalOpen(true);
             }}
-            className="flex items-center gap-1.5 bg-amber-400 hover:bg-amber-300 text-black font-extrabold text-xs px-3 py-1.5 border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer"
+            className="flex items-center gap-1 bg-amber-400 hover:bg-amber-300 text-black font-bold text-xs px-2 py-1 border-2 border-black shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer"
             title="Open Desktop Calculator"
           >
-            <Calculator className="w-3.5 h-3.5 text-black" />
-            Calculator
+            <Calculator className="w-3 h-3 text-black" />
+            Calc
           </button>
+
+          {/* Print & Export Segmented Group */}
+          <div className="flex items-center bg-black border-2 border-black p-0.5 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]">
+            <button
+              onClick={() => setIsPrintModalOpen(true)}
+              className="flex items-center gap-1 px-2 py-0.5 text-xs font-bold text-amber-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+              title="Print current day sheet"
+            >
+              <Printer className="w-3 h-3 text-amber-400" />
+              Print
+            </button>
+            <span className="w-px h-3.5 bg-zinc-700" />
+            <button
+              type="button"
+              onClick={() => setIsThermalModalOpen(true)}
+              className="flex items-center gap-1 px-2 py-0.5 text-xs font-bold text-amber-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+              title="Print-friendly POS slip"
+            >
+              <Receipt className="w-3 h-3 text-amber-400" />
+              Slip
+            </button>
+            <span className="w-px h-3.5 bg-zinc-700" />
+            <button
+              onClick={handleExportPDF}
+              disabled={isExportingPDF}
+              className="flex items-center gap-1 px-2 py-0.5 text-xs font-bold text-emerald-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer disabled:opacity-50"
+              title="Export current day sheet to PDF"
+            >
+              {isExportingPDF ? (
+                <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
+              ) : (
+                <FileText className="w-3 h-3 text-emerald-400" />
+              )}
+              PDF
+            </button>
+          </div>
+
+          {/* Backup Button */}
+          {onBackupJSON && (
+            <button
+              type="button"
+              onClick={onBackupJSON}
+              className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-2 py-1 border-2 border-black shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer"
+              title="Quick backup to JSON file"
+            >
+              <Download className="w-3 h-3 text-white" />
+              <span>Backup</span>
+            </button>
+          )}
+
+          {/* Status Badge */}
+          <span
+            className={`text-xs px-2 py-1 font-bold uppercase tracking-wider border-2 ${
+              isLocked
+                ? "bg-amber-400 border-black text-black"
+                : "bg-white border-black text-black"
+            } flex items-center gap-1`}
+          >
+            {isLocked ? (
+              <Lock className="w-3 h-3" />
+            ) : (
+              <Unlock className="w-3 h-3" />
+            )}
+            {isLocked ? "Locked" : "Draft"}
+          </span>
+        </div>
         </div>
       </div>
 
@@ -535,6 +602,65 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
             </button>
 
             <div className="h-5 w-px bg-zinc-400 mx-1" />
+
+            {/* Undo Changes Button */}
+            <button
+              type="button"
+              onClick={onUndo}
+              disabled={!canUndo}
+              className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider px-3 py-1.5 border-2 active:scale-95 transition-all cursor-pointer ${
+                canUndo
+                  ? "bg-zinc-100 hover:bg-zinc-200 text-black border-black shadow-xs"
+                  : "bg-zinc-100 text-zinc-400 border-zinc-300 opacity-60 cursor-not-allowed"
+              }`}
+              title={
+                canUndo
+                  ? "Undo recent changes on this sheet (Ctrl+Z)"
+                  : "No changes to undo"
+              }
+            >
+              <Undo2 className="w-3.5 h-3.5 text-zinc-700" />
+              <span>Undo Changes</span>
+            </button>
+
+            {/* Lock / Unlock Toggle Button */}
+            <button
+              type="button"
+              onClick={toggleLock}
+              className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider px-3 py-1.5 border-2 border-black active:scale-95 transition-all cursor-pointer ${
+                isLocked
+                  ? "bg-amber-400 hover:bg-amber-300 text-black shadow-xs"
+                  : "bg-white hover:bg-zinc-100 text-black shadow-xs"
+              }`}
+              title={
+                isLocked
+                  ? "Sheet is Locked. Click to Unlock."
+                  : "Sheet is Unlocked. Click to Lock."
+              }
+            >
+              {isLocked ? (
+                <>
+                  <Lock className="w-3.5 h-3.5 text-black" />
+                  <span>Locked (Unlock)</span>
+                </>
+              ) : (
+                <>
+                  <Unlock className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Unlocked (Lock)</span>
+                </>
+              )}
+            </button>
+
+            {/* Date Goto Button */}
+            <button
+              type="button"
+              onClick={() => setIsGoToDateModalOpen(true)}
+              className="flex items-center gap-1.5 bg-black hover:bg-zinc-800 text-amber-400 text-xs font-bold uppercase tracking-wider px-3 py-1.5 border-2 border-black active:scale-95 transition-all cursor-pointer"
+              title="Go to specific date sheet"
+            >
+              <Calendar className="w-3.5 h-3.5 text-amber-400" />
+              <span>Go to Date</span>
+            </button>
 
             <button
               onClick={onSaveRecord}
@@ -898,7 +1024,7 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
                   </span>
                   Counted Total (7)
                 </th>
-                <th className="py-2.5 px-3 lg:px-4 text-right font-bold">
+                <th className="py-2.5 px-3 lg:px-4 text-right font-bold w-32 md:w-36">
                   <span className="bg-amber-400 text-black px-1 py-0.5 rounded font-mono text-[10px] mr-1">
                     I
                   </span>
@@ -1217,53 +1343,79 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
       </div>
 
       {/* Physical Filing Verification & Approval Footer (Print Only) */}
-      <div className="hidden print:flex print-filing-footer items-end justify-between gap-4">
-        <div className="print-sign-line">
-          Operator Signature
-          <div className="text-[8pt] text-zinc-600 font-normal">
-            {record.operator || "Staff Member"}
+      <div className="hidden print:flex print-signature-block">
+        <div className="print-signature-grid">
+          {/* Operator Signature Box */}
+          <div className="print-signature-box">
+            <div className="print-signature-box-header">
+              <span>1. Cashier / Operator</span>
+              <span>Till Count Certification</span>
+            </div>
+            <div className="text-[7pt] text-zinc-500 mb-3">
+              I certify that all cash drawer counts, safe takings, and card terminal batch records are accurate.
+            </div>
+            <div className="print-sign-line">
+              <div>Signature: ___________________________</div>
+              <div className="print-sign-meta">Name: {record.operator || "Staff Member"} | Date: {formatToUKDate(record.date)}</div>
+            </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-3 border-2 border-black p-2 bg-zinc-50">
-          <RecordAuditQrCode
-            record={record}
-            totals={totals}
-            size={60}
-            showCaption={false}
-            className="border-none shadow-none p-0 bg-transparent"
-          />
-          <div
-            className="print-audit-stamp border-none p-0 bg-transparent text-left"
-            data-total-variance="true"
-          >
-            <div>
-              TOTAL VARIANCE:{" "}
-              <span className="font-mono text-sm font-black">
+          {/* Shift Supervisor Box */}
+          <div className="print-signature-box">
+            <div className="print-signature-box-header">
+              <span>2. Shift Supervisor</span>
+              <span>Safe Drop &amp; Float Witness</span>
+            </div>
+            <div className="text-[7pt] text-zinc-500 mb-3">
+              Physical floats, opening balance consistency, and cash banking envelopes witnessed and verified.
+            </div>
+            <div className="print-sign-line">
+              <div>Signature: ___________________________</div>
+              <div className="print-sign-meta">Witness Name: _________________ | Date: ___/___/______</div>
+            </div>
+          </div>
+
+          {/* Store Manager / Auditor Box */}
+          <div className="print-signature-box">
+            <div className="print-signature-box-header">
+              <span>3. Manager / Auditor</span>
+              <span>Reconciliation Sign-Off</span>
+            </div>
+            <div className="text-[7pt] text-zinc-500 mb-3">
+              Financial audit complete. Daily register balance variance of {formatCurrency(totals.totalVariance, true)} reviewed and posted.
+            </div>
+            <div className="print-sign-line">
+              <div>Signature: ___________________________</div>
+              <div className="print-sign-meta">Manager Name: _________________ | Date: ___/___/______</div>
+            </div>
+          </div>
+
+          {/* Audit Stamp & QR Code Card */}
+          <div className="print-audit-stamp-card">
+            <RecordAuditQrCode
+              record={record}
+              totals={totals}
+              size={56}
+              showCaption={false}
+              className="border-none shadow-none p-0 bg-transparent"
+            />
+            <div className="print-audit-stamp border-none p-0 bg-transparent text-left" data-total-variance="true">
+              <div className="text-[6.5pt] font-mono text-zinc-500 uppercase tracking-wider">Net Day Variance</div>
+              <div className="font-mono text-sm font-black text-black">
                 {formatCurrency(totals.totalVariance, true)}
-              </span>
-            </div>
-            <div className="text-[7.5pt] font-mono text-zinc-700">
-              ID: <strong>{record.id}</strong> | Status:{" "}
-              <strong>
-                {totals.totalVariance < 0
-                  ? "SHORT"
-                  : totals.totalVariance > 0
-                    ? "OVER"
-                    : "BALANCED"}
-              </strong>
-            </div>
-            <div className="text-[6.5pt] uppercase tracking-wider text-zinc-500 mt-0.5">
-              Digital Verification QR Code
+              </div>
+              <div className="text-[7pt] font-mono text-zinc-700 mt-0.5">
+                ID: <strong>{record.id}</strong>
+              </div>
+              <div className="inline-block mt-1 px-1.5 py-0.5 bg-black text-white text-[7pt] font-mono font-black uppercase">
+                {totals.totalVariance < 0 ? "SHORT" : totals.totalVariance > 0 ? "OVER" : "BALANCED"}
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="print-sign-line">
-          Manager / Auditor Approval
-          <div className="text-[8pt] text-zinc-600 font-normal">
-            Date & Signature
-          </div>
+        <div className="print-compliance-statement">
+          Official Till Cashing &amp; Reconciliation Record • Retain for Statutory Audit &amp; Accounting Compliance
         </div>
       </div>
 
@@ -1309,6 +1461,22 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
         onClose={() => setIsThermalModalOpen(false)}
         record={record}
         allRecords={allRecords}
+        financialYearFormat={financialYearFormat}
+      />
+
+      {/* Date Go To Jump Modal */}
+      <GoToDateModal
+        isOpen={isGoToDateModalOpen}
+        onClose={() => setIsGoToDateModalOpen(false)}
+        currentDate={record.date}
+        records={allRecords}
+        onSelectDate={(targetDate) => {
+          if (onGoToDate) {
+            onGoToDate(targetDate);
+          } else {
+            onChangeRecord({ ...record, date: targetDate });
+          }
+        }}
         financialYearFormat={financialYearFormat}
       />
     </div>

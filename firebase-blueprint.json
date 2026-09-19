@@ -1,0 +1,61 @@
+{
+  "entities": {
+    "SheetRecord": {
+      "title": "SheetRecord",
+      "description": "Daily till cashing up reconciliation record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "operator": { "type": "string" },
+        "isSaved": { "type": "boolean" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "rows": { "type": "array" }
+      },
+      "required": ["id", "date"]
+    },
+    "TillSettings": {
+      "title": "TillSettings",
+      "description": "Application settings including operators and passkey security configuration",
+      "type": "object",
+      "properties": {
+        "operators": { "type": "array" },
+        "isProtected": { "type": "boolean" },
+        "pinCode": { "type": "string" },
+        "lockDelayMinutes": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "AuditLogEntry": {
+      "title": "AuditLogEntry",
+      "description": "Audit trail log record for system actions and changes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "recordId": { "type": "string" },
+        "recordDate": { "type": "string" },
+        "user": { "type": "string" },
+        "actionType": { "type": "string" },
+        "summary": { "type": "string" }
+      },
+      "required": ["id", "timestamp", "summary"]
+    }
+  },
+  "firestore": {
+    "/till_records/{recordId}": {
+      "schema": "SheetRecord",
+      "description": "Daily till reconciliation records collection"
+    },
+    "/till_settings/{settingId}": {
+      "schema": "TillSettings",
+      "description": "Settings documents for operators and app security"
+    },
+    "/till_audit_logs/{logId}": {
+      "schema": "AuditLogEntry",
+      "description": "Audit log entries"
+    }
+  }
+}

@@ -17,6 +17,15 @@
 }
 
 /* ==========================================================================
+   PRINT-ONLY ELEMENTS (Hidden on Interactive Screen, Active on Print)
+   ========================================================================== */
+.print-only,
+.print-summary-header,
+.print-signature-block {
+  display: none;
+}
+
+/* ==========================================================================
    PRINT MEDIA QUERIES: Physical Audit & Filing Optimization
    ========================================================================== */
 @media print {
@@ -102,6 +111,102 @@
     padding-right: 2px !important;
   }
 
+  /* ==========================================================================
+     AUTOMATIC SUMMARY HEADER FOR DAILY REPORT
+     ========================================================================== */
+  .print-only,
+  .print-summary-header,
+  .daily-report-summary-header {
+    display: block !important;
+    width: 100% !important;
+    margin-bottom: 12px !important;
+    padding-bottom: 8px !important;
+    border-bottom: 2.5px solid #000000 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-summary-header-top {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: flex-start !important;
+    margin-bottom: 8px !important;
+  }
+
+  .print-summary-brand {
+    font-size: 8pt !important;
+    font-weight: 800 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.1em !important;
+    color: #4b5563 !important;
+    margin-bottom: 2px !important;
+  }
+
+  .print-summary-title {
+    font-size: 15pt !important;
+    font-weight: 900 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.04em !important;
+    color: #000000 !important;
+    line-height: 1.1 !important;
+    margin: 0 !important;
+  }
+
+  .print-summary-subtitle {
+    font-size: 8pt !important;
+    font-weight: 600 !important;
+    color: #374151 !important;
+    margin-top: 2px !important;
+  }
+
+  .print-summary-meta-box {
+    text-align: right !important;
+    font-family: 'JetBrains Mono', monospace !important;
+  }
+
+  .print-summary-badge {
+    display: inline-block !important;
+    border: 1.5px solid #000000 !important;
+    padding: 2px 7px !important;
+    font-size: 7.5pt !important;
+    font-weight: 900 !important;
+    text-transform: uppercase !important;
+    background-color: #f4f4f5 !important;
+    color: #000000 !important;
+    letter-spacing: 0.05em !important;
+  }
+
+  .print-summary-details-grid {
+    display: grid !important;
+    grid-template-columns: repeat(4, 1fr) !important;
+    gap: 8px !important;
+    padding: 6px 10px !important;
+    border: 1.5px solid #000000 !important;
+    background-color: #f9fafb !important;
+    font-size: 8.5pt !important;
+    margin-top: 6px !important;
+  }
+
+  .print-summary-detail-item {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  .print-summary-detail-label {
+    font-size: 6.5pt !important;
+    font-weight: 800 !important;
+    text-transform: uppercase !important;
+    color: #6b7280 !important;
+    letter-spacing: 0.05em !important;
+  }
+
+  .print-summary-detail-value {
+    font-size: 9pt !important;
+    font-weight: 900 !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    color: #000000 !important;
+  }
+
   /* Table structure for audit and filing */
   table {
     width: 100% !important;
@@ -185,27 +290,80 @@
     print-color-adjust: exact !important;
   }
 
-  /* Physical Filing Verification & Signature Block */
+  /* ==========================================================================
+     AUTOMATIC SIGNATURE & AUDIT APPROVAL BLOCK
+     ========================================================================== */
+  .print-signature-block,
+  .print-signatures-section,
   .print-filing-footer {
     display: flex !important;
-    justify-content: space-between !important;
-    align-items: flex-end !important;
-    margin-top: 18px !important;
-    padding-top: 12px !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    margin-top: 14px !important;
+    padding-top: 10px !important;
     border-top: 2px solid #000000 !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
   }
 
+  .print-signature-grid {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr) auto !important;
+    gap: 12px !important;
+    align-items: stretch !important;
+    width: 100% !important;
+    margin-bottom: 8px !important;
+  }
+
+  .print-signature-box {
+    border: 1.5px solid #000000 !important;
+    padding: 8px 10px !important;
+    background-color: #fafafa !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    min-height: 80px !important;
+  }
+
+  .print-signature-box-header {
+    font-size: 7.5pt !important;
+    font-weight: 900 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+    color: #000000 !important;
+    border-bottom: 1px solid #d1d5db !important;
+    padding-bottom: 3px !important;
+    margin-bottom: 22px !important;
+    display: flex !important;
+    justify-content: space-between !important;
+  }
+
   .print-sign-line {
     border-top: 1.5px solid #000000 !important;
-    width: 200px !important;
+    width: 100% !important;
     text-align: center !important;
-    font-family: monospace !important;
-    font-size: 9pt !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 8pt !important;
     font-weight: bold !important;
-    padding-top: 4px !important;
+    padding-top: 3px !important;
     color: #000000 !important;
+  }
+
+  .print-sign-meta {
+    font-size: 7pt !important;
+    color: #4b5563 !important;
+    font-weight: normal !important;
+    margin-top: 1px !important;
+  }
+
+  .print-audit-stamp-card {
+    border: 2px solid #000000 !important;
+    background-color: #f4f4f5 !important;
+    padding: 8px 12px !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    min-width: 180px !important;
   }
 
   .print-audit-stamp {
@@ -213,7 +371,7 @@
     background-color: #f4f4f5 !important;
     padding: 6px 14px !important;
     text-align: center !important;
-    font-family: monospace !important;
+    font-family: 'JetBrains Mono', monospace !important;
     font-weight: 900 !important;
     font-size: 10pt !important;
     text-transform: uppercase !important;
@@ -221,8 +379,21 @@
     print-color-adjust: exact !important;
   }
 
+  .print-compliance-statement {
+    font-size: 6.5pt !important;
+    font-weight: 600 !important;
+    color: #4b5563 !important;
+    text-align: center !important;
+    border-top: 1px dashed #9ca3af !important;
+    padding-top: 4px !important;
+    margin-top: 4px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.06em !important;
+  }
+
   /* Digital Audit QR Code Print Optimization */
   .print-filing-footer img,
+  .print-signature-block img,
   [title*="QR"],
   img[alt*="QR"] {
     image-rendering: -webkit-optimize-contrast !important;
