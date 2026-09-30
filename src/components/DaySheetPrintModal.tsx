@@ -57,7 +57,49 @@ export const DaySheetPrintModal: React.FC<DaySheetPrintModalProps> = ({
   };
 
   const generateHtml = (qrDataUrl: string = "") => {
-    const rowsHtml = record.rows
+    const onlineRow = record.rows.find((r) => r.isOnlineOrders);
+    const normalRows = record.rows.filter((r) => !r.isOnlineOrders);
+
+    const onlineSalesHtml = onlineRow
+      ? `
+      <!-- TOP SECTION: ONLINE SALES -->
+      <div style="border: 2px solid #000000; padding: 10px 14px; margin-bottom: 16px; background-color: #f0f9ff; page-break-inside: avoid;">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #000000; padding-bottom: 6px; margin-bottom: 10px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-weight: 900; font-size: 13px; text-transform: uppercase; color: #000000; letter-spacing: 0.05em;">Online Sales</span>
+            <span style="font-size: 9.5px; font-weight: 800; text-transform: uppercase; background: #e0f2fe; color: #0369a1; border: 1px solid #7dd3fc; padding: 2px 6px;">Card Settlement &amp; VAT</span>
+          </div>
+          <div style="font-size: 11px; font-weight: 600; color: #475569;">
+            Non-physical sales revenue (credit card takings only • direct to bank • no float or cash drawer)
+          </div>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px;">
+          <div style="background: #ffffff; border: 1.5px solid #000000; padding: 6px 10px;">
+            <div style="font-size: 9.5px; font-weight: 800; color: #0369a1; text-transform: uppercase;">(C) Sys Card Takings</div>
+            <div style="font-family: monospace; font-size: 15px; font-weight: 800; color: #000000; text-align: right; margin-top: 3px;">${formatCurrency(onlineRow.col2ExpectedCard || 0)}</div>
+          </div>
+          <div style="background: #e0f2fe; border: 1.5px solid #000000; padding: 6px 10px;">
+            <div style="font-size: 9.5px; font-weight: 800; color: #0369a1; text-transform: uppercase;">(D) Sys Total</div>
+            <div style="font-family: monospace; font-size: 15px; font-weight: 800; color: #000000; text-align: right; margin-top: 3px;">${formatCurrency(onlineRow.col2ExpectedCard || 0)}</div>
+          </div>
+          <div style="background: #ffffff; border: 1.5px solid #000000; padding: 6px 10px;">
+            <div style="font-size: 9.5px; font-weight: 800; color: #0369a1; text-transform: uppercase;">(G) Card PDQ Actual</div>
+            <div style="font-family: monospace; font-size: 15px; font-weight: 800; color: #000000; text-align: right; margin-top: 3px;">${formatCurrency(onlineRow.col6ActualCard || 0)}</div>
+          </div>
+          <div style="background: #e0f2fe; border: 1.5px solid #000000; padding: 6px 10px;">
+            <div style="font-size: 9.5px; font-weight: 800; color: #0369a1; text-transform: uppercase;">(H) Count Total</div>
+            <div style="font-family: monospace; font-size: 15px; font-weight: 800; color: #000000; text-align: right; margin-top: 3px;">${formatCurrency(onlineRow.col6ActualCard || 0)}</div>
+          </div>
+          <div style="background: #ffffff; border: 1.5px solid #000000; padding: 6px 10px;">
+            <div style="font-size: 9.5px; font-weight: 800; color: #0369a1; text-transform: uppercase;">(I) VAT Value</div>
+            <div style="font-family: monospace; font-size: 15px; font-weight: 800; color: #0284c7; text-align: right; margin-top: 3px;">${formatCurrency(onlineRow.vat || 0)}</div>
+          </div>
+        </div>
+      </div>
+    `
+      : "";
+
+    const rowsHtml = normalRows
       .map((row) => {
         const expTotal = getRowExpectedTotal(row);
         const actTotal = getRowActualTotal(row);
@@ -312,6 +354,13 @@ export const DaySheetPrintModal: React.FC<DaySheetPrintModalProps> = ({
           ${totals.totalVariance < 0 ? "SHORT (-)" : totals.totalVariance > 0 ? "OVER (+)" : "BALANCED (RECONCILED)"}
         </div>
       </div>
+    </div>
+
+    ${onlineSalesHtml}
+
+    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+      <span style="font-weight: 900; font-size: 13px; text-transform: uppercase; color: #000000; letter-spacing: 0.05em;">Normal Sales (Physical Till Registers)</span>
+      <span style="font-size: 9.5px; font-weight: 800; text-transform: uppercase; background: #f4f4f5; color: #18181b; border: 1px solid #a1a1aa; padding: 2px 6px;">In-Store Registers &amp; Floats</span>
     </div>
 
     <table>

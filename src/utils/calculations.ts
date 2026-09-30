@@ -50,6 +50,7 @@ export function parseUKDateToISO(ukDateStr: string): string {
  */
 export function getRowExpectedTotal(row: TillRowData): number {
   if (row.isYard) return 0;
+  if (row.isOnlineOrders) return row.col2ExpectedCard || 0;
   return (row.col1ExpectedCash || 0) + (row.col2ExpectedCard || 0);
 }
 
@@ -58,6 +59,7 @@ export function getRowExpectedTotal(row: TillRowData): number {
  */
 export function getRowActualTotal(row: TillRowData): number {
   if (row.isYard) return 0;
+  if (row.isOnlineOrders) return row.col6ActualCard || 0;
   return (row.col4BankingCash || 0) + (row.col5FloatCash || 0) + (row.col6ActualCard || 0);
 }
 
@@ -79,6 +81,9 @@ export function getRowVariance(
   if (row.isYard) {
     return row.customVariance || 0;
   }
+  if (row.isOnlineOrders) {
+    return 0; // Online orders has no variance (VAT tracked instead)
+  }
   const actual = getRowActualTotal(row);
   const expected = getRowExpectedTotal(row);
 
@@ -94,7 +99,8 @@ export function getRowVariance(
 }
 
 /**
- * Compute grand totals for a full sheet record
+ * Compute grand totals for physical till registers (Tills 1-5).
+ * Online Sales are separate non-physical sales and are not included in till takings.
  */
 export function calculateGrandTotals(
   rows: TillRowData[],
@@ -108,9 +114,20 @@ export function calculateGrandTotals(
   let totalCol5Float = 0;
   let totalCol6Card = 0;
   let totalCol7Actual = 0;
+  let onlineSalesExpected = 0;
+  let onlineSalesActual = 0;
+  let onlineSalesVat = 0;
 
   for (const row of rows) {
     if (row.isYard) {
+      continue;
+    }
+    
+    // Online Sales is a separate area/sales channel, NOT part of physical till takings
+    if (row.isOnlineOrders || row.id === 'online-orders' || (row.name && (row.name.toLowerCase() === 'online orders' || row.name.toLowerCase() === 'online sales'))) {
+      onlineSalesExpected += row.col2ExpectedCard || 0;
+      onlineSalesActual += row.col6ActualCard || 0;
+      onlineSalesVat += row.vat || 0;
       continue;
     }
     
@@ -124,9 +141,13 @@ export function calculateGrandTotals(
     totalCol7Actual += getRowActualTotal(row);
   }
 
-  // The total variance is the sum of Cell 8 (getRowVariance) for all rows
+  // The total variance is the sum of Cell 8 (getRowVariance) for all physical till rows
   const totalVariance = rows.reduce(
-    (sum, row) => sum + getRowVariance(row, record, allRecords),
+    (sum, row) => {
+      const isOnline = row.isOnlineOrders || row.id === 'online-orders' || (row.name && (row.name.toLowerCase() === 'online orders' || row.name.toLowerCase() === 'online sales'));
+      if (isOnline || row.isYard) return sum;
+      return sum + getRowVariance(row, record, allRecords);
+    },
     0
   );
 
@@ -139,6 +160,11 @@ export function calculateGrandTotals(
     totalCol6Card: Number(totalCol6Card.toFixed(2)),
     totalCol7Actual: Number(totalCol7Actual.toFixed(2)),
     totalVariance: Number(totalVariance.toFixed(2)),
+    onlineSalesExpected: Number(onlineSalesExpected.toFixed(2)),
+    onlineSalesActual: Number(onlineSalesActual.toFixed(2)),
+    onlineSalesVat: Number(onlineSalesVat.toFixed(2)),
+    combinedTotalExpected: Number((totalCol3Expected + onlineSalesExpected).toFixed(2)),
+    combinedTotalActual: Number((totalCol7Actual + onlineSalesActual).toFixed(2)),
   };
 }
 
@@ -184,6 +210,20 @@ export function exportRecordToCSV(record: SheetRecord, allRecords: SheetRecord[]
   for (const row of record.rows) {
     if (row.isYard) {
       lines.push(`"${row.name}",,,,,,,,"${row.customVariance || 0}"`);
+      continue;
+    }
+    if (row.isOnlineOrders) {
+      lines.push([
+        `"${row.name}"`,
+        '0.00',
+        row.col2ExpectedCard.toFixed(2),
+        row.col2ExpectedCard.toFixed(2),
+        '0.00',
+        '0.00',
+        row.col6ActualCard.toFixed(2),
+        row.col6ActualCard.toFixed(2),
+        `"VAT: £${(row.vat || 0).toFixed(2)}"`,
+      ].join(','));
       continue;
     }
     const expTotal = getRowExpectedTotal(row);
@@ -249,8 +289,30 @@ export function recalculateAllRecords(records: SheetRecord[]): SheetRecord[] {
     const rec = chronological[i];
     const prevRec = i > 0 ? recalculated[i - 1] : undefined;
 
-    // Ensure all standard tills exist in the record (including Till 5)
+    // Ensure all standard tills exist in the record (including Till 5 and Online Sales replacing Yard)
     let currentRows = [...(rec.rows || [])];
+
+    // 1. Migrate any legacy Yard row directly into Online Sales
+    const yardIdx = currentRows.findIndex(
+      (r) => r.isYard || r.id === 'yard' || (r.name && r.name.toLowerCase() === 'yard')
+    );
+    if (yardIdx !== -1) {
+      const yardRow = currentRows[yardIdx];
+      currentRows[yardIdx] = {
+        id: 'online-orders',
+        name: 'Online Sales',
+        isOnlineOrders: true,
+        isYard: false,
+        col1ExpectedCash: 0,
+        col2ExpectedCard: yardRow.col2ExpectedCard || 0,
+        col4BankingCash: 0,
+        col5FloatCash: 0,
+        col6ActualCard: yardRow.col6ActualCard || yardRow.col2ExpectedCard || 0,
+        vat: yardRow.vat || 0,
+      };
+    }
+
+    // 2. Ensure Till 5 exists
     const hasTill5 = currentRows.some(
       (r) => r.id === 'till-5' || (r.name && r.name.toLowerCase() === 'till 5')
     );
@@ -264,24 +326,71 @@ export function recalculateAllRecords(records: SheetRecord[]): SheetRecord[] {
         col5FloatCash: 0,
         col6ActualCard: 0,
       };
-      const yardIdx = currentRows.findIndex((r) => r.isYard);
-      if (yardIdx !== -1) {
-        currentRows.splice(yardIdx, 0, till5Row);
+      const onlineOrdersIdx = currentRows.findIndex((r) => r.isOnlineOrders);
+      if (onlineOrdersIdx !== -1) {
+        currentRows.splice(onlineOrdersIdx, 0, till5Row);
       } else {
         currentRows.push(till5Row);
       }
+    }
+
+    // 3. Ensure Online Sales exists
+    const hasOnlineOrders = currentRows.some(
+      (r) => r.isOnlineOrders || r.id === 'online-orders' || (r.name && (r.name.toLowerCase() === 'online orders' || r.name.toLowerCase() === 'online sales'))
+    );
+    if (!hasOnlineOrders) {
+      currentRows.push({
+        id: 'online-orders',
+        name: 'Online Sales',
+        isOnlineOrders: true,
+        isYard: false,
+        col1ExpectedCash: 0,
+        col2ExpectedCard: 0,
+        col4BankingCash: 0,
+        col5FloatCash: 0,
+        col6ActualCard: 0,
+        vat: 0,
+      });
     }
 
     const updatedRows = currentRows.map((row) => {
       if (row.isYard) {
         return {
           ...row,
-          customVariance: Number(Number(row.customVariance || 0).toFixed(2)),
+          id: 'online-orders',
+          name: 'Online Sales',
+          isOnlineOrders: true,
+          isYard: false,
           col1ExpectedCash: 0,
-          col2ExpectedCard: 0,
+          col2ExpectedCard: Number(Number(row.col2ExpectedCard || 0).toFixed(2)),
           col4BankingCash: 0,
           col5FloatCash: 0,
-          col6ActualCard: 0,
+          col6ActualCard: Number(Number(row.col6ActualCard || row.col2ExpectedCard || 0).toFixed(2)),
+          vat: Number(Number(row.vat || 0).toFixed(2)),
+        };
+      }
+
+      if (row.isOnlineOrders || row.id === 'online-orders' || (row.name && (row.name.toLowerCase() === 'online orders' || row.name.toLowerCase() === 'online sales'))) {
+        const col2Card = Number(Number(row.col2ExpectedCard || 0).toFixed(2));
+        const col6Card = row.col6ActualCard !== undefined && row.col6ActualCard !== 0 
+          ? Number(Number(row.col6ActualCard).toFixed(2)) 
+          : col2Card;
+        const vat = Number(Number(row.vat || 0).toFixed(2));
+
+        return {
+          ...row,
+          id: 'online-orders',
+          name: 'Online Sales',
+          isOnlineOrders: true,
+          isYard: false,
+          col1ExpectedCash: 0,
+          col2ExpectedCard: col2Card,
+          col4BankingCash: 0,
+          col5FloatCash: 0,
+          col6ActualCard: col6Card,
+          vat,
+          prevFloat: 0,
+          customVariance: 0,
         };
       }
 
@@ -311,14 +420,14 @@ export function recalculateAllRecords(records: SheetRecord[]): SheetRecord[] {
         col4BankingCash: col4Banking,
         col5FloatCash: col5Float,
         col6ActualCard: col6Card,
-        prevFloat: prevFloat !== undefined ? Number(Number(prevFloat).toFixed(2)) : undefined,
+        prevFloat: prevFloat !== undefined ? Number(Number(prevFloat).toFixed(2)) : 0,
       };
     });
 
     recalculated.push({
       ...rec,
       rows: updatedRows,
-      updatedAt: new Date().toISOString(),
+      updatedAt: rec.updatedAt || rec.createdAt || new Date().toISOString(),
     });
   }
 
@@ -430,7 +539,7 @@ export function groupRecordsByCalendarWeek(records: SheetRecord[]): WeekGroup[] 
 
   // Sort weeks descending by Monday ISO (latest week first)
   const sortedWeeks = Array.from(groupsMap.values()).sort((a, b) => {
-    return b.mondayISO.localeCompare(a.mondayISO);
+    return (b?.mondayISO || '').localeCompare(a?.mondayISO || '');
   });
 
   // Sort records within each week chronologically (Monday to Sunday)
@@ -529,7 +638,7 @@ export function getAvailableFinancialYears(
     }
   });
 
-  return Array.from(yearsSet).sort((a, b) => b.localeCompare(a));
+  return Array.from(yearsSet).sort((a, b) => (b || '').localeCompare(a || ''));
 }
 
 /**

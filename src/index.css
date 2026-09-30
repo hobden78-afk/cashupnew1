@@ -236,6 +236,194 @@
     print-color-adjust: exact !important;
   }
 
+  /* ==========================================================================
+     ONLINE SALES ROW & TILLS RECONCILIATION PRINT RULES
+     Explicitly ensures the Online Sales row in tables is preserved, formatted,
+     and never hidden or clipped during browser print or PDF export.
+     ========================================================================== */
+  .online-sales-section,
+  .online-sales-row,
+  [data-online-sales="true"],
+  [data-row-type="online-sales"] {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    height: auto !important;
+    min-height: 28px !important;
+    pointer-events: auto !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    overflow: visible !important;
+  }
+
+  .online-sales-section {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    border: 1.5px solid #000000 !important;
+    border-radius: 4px !important;
+    padding: 8px 12px !important;
+    margin-bottom: 12px !important;
+  }
+
+  .online-sales-section h2,
+  .online-sales-section span,
+  .online-sales-section p,
+  .online-sales-section div {
+    color: #000000 !important;
+    -webkit-text-fill-color: #000000 !important;
+  }
+
+  .online-sales-section input {
+    color: #000000 !important;
+    -webkit-text-fill-color: #000000 !important;
+    background-color: #f8fafc !important;
+    border: 1px solid #000000 !important;
+  }
+
+  /* When rendered within an HTML <table> (Modern view & Monthly Report) */
+  tr.online-sales-row,
+  tr[data-online-sales="true"],
+  tr[data-row-type="online-sales"] {
+    display: table-row !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    background-color: #f8fafc !important;
+    border-bottom: 1.5px solid #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  tr.online-sales-row td,
+  tr[data-online-sales="true"] td {
+    visibility: visible !important;
+    opacity: 1 !important;
+    color: #000000 !important;
+    border-color: #000000 !important;
+    padding-top: 6px !important;
+    padding-bottom: 6px !important;
+  }
+
+  /* Desktop/fullscreen table grid containers must ALWAYS be visible in print */
+  .tills-table-container,
+  div[class*="overflow-x-auto"] {
+    display: block !important;
+    visibility: visible !important;
+    overflow: visible !important;
+    width: 100% !important;
+  }
+
+  /* Hide responsive mobile card view during print to prevent duplication */
+  .mobile-cards-container,
+  .md\:hidden:not(.print\:block) {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  /* Ensure the title 'Online Sales' is crisp black on white paper in print */
+  .online-sales-row [title="Online Sales"],
+  .online-sales-row span.text-white,
+  .online-sales-row .text-white,
+  [data-online-sales="true"] [title="Online Sales"],
+  [data-online-sales="true"] span.text-white,
+  [data-online-sales="true"] .text-white,
+  [data-online-sales="true"] span {
+    color: #000000 !important;
+    -webkit-text-fill-color: #000000 !important;
+    text-shadow: none !important;
+    filter: none !important;
+    font-weight: 900 !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+
+  /* All till row titles in Delta Access form print cleanly in solid black */
+  .till-row span.text-white,
+  [data-till-row="true"] span.text-white,
+  .w-20 > span.text-white {
+    color: #000000 !important;
+    -webkit-text-fill-color: #000000 !important;
+    text-shadow: none !important;
+    filter: none !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+
+  /* Numeric inputs inside Online Sales row: clean black numbers */
+  .online-sales-row input,
+  [data-online-sales="true"] input {
+    color: #000000 !important;
+    -webkit-text-fill-color: #000000 !important;
+    font-weight: 800 !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-align: right !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    font-size: 10pt !important;
+  }
+
+  /* Online Sales Card Input Boxes (Col 2 & Col 6) */
+  .online-sales-row [class*="bg-sky-50"],
+  [data-online-sales="true"] [class*="bg-sky-50"] {
+    background-color: #f0f9ff !important;
+    border: 1.5px solid #0284c7 !important;
+    border-radius: 4px !important;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Online Sales Totals Boxes (Col 3 & Col 7) */
+  .online-sales-row [class*="bg-sky-200"],
+  .online-sales-row [class*="bg-sky-100"],
+  [data-online-sales="true"] [class*="bg-sky-200"],
+  [data-online-sales="true"] [class*="bg-sky-100"] {
+    background-color: #e0f2fe !important;
+    border: 1.5px solid #0284c7 !important;
+    color: #0369a1 !important;
+    font-weight: 900 !important;
+    border-radius: 4px !important;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* VAT field badge in Online Sales row */
+  .online-sales-row [class*="bg-sky-200/90"],
+  [data-online-sales="true"] [class*="bg-sky-200/90"],
+  .online-sales-row .vat-tag,
+  [data-online-sales="true"] .vat-tag {
+    background-color: #0284c7 !important;
+    color: #ffffff !important;
+    border: 1px solid #0369a1 !important;
+    font-size: 7.5pt !important;
+    font-weight: 900 !important;
+    padding: 1px 4px !important;
+    border-radius: 2px !important;
+    text-transform: uppercase !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Currency symbol styling inside Online Sales row */
+  .online-sales-row span[class*="text-sky-"],
+  [data-online-sales="true"] span[class*="text-sky-"] {
+    color: #000000 !important;
+    font-weight: 800 !important;
+  }
+
+  /* Vertical dividing line between Sys Takings and Actuals */
+  .online-sales-row [class*="bg-black"],
+  [data-online-sales="true"] [class*="bg-black"] {
+    background-color: #000000 !important;
+    width: 2px !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
   /* 2. PROMINENT TOTAL VARIANCE / TILL DIFFERENCE AUDIT HIGHLIGHT */
   .total-variance-highlight,
   .print-total-variance,

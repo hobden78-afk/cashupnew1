@@ -40,6 +40,7 @@ import {
   X,
   Activity,
   Loader2,
+  Globe,
 } from 'lucide-react';
 import { FinancialYearSwitcher, FinancialYearFormat } from './FinancialYearSwitcher';
 import { exportWeeklyReportToPDF } from '../utils/pdfExport';
@@ -112,6 +113,55 @@ export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
 
   const avgDaily = currentWeekRecords.length > 0 ? weeklyExpectedSum / currentWeekRecords.length : 0;
 
+  // Weekly Online Sales & VAT Aggregates
+  const onlineSalesData = useMemo(() => {
+    return currentWeekRecords.map((rec) => {
+      const onlineRow = rec.rows.find(
+        (r) =>
+          r.isOnlineOrders ||
+          r.id === 'online-orders' ||
+          (r.name && (r.name.toLowerCase() === 'online orders' || r.name.toLowerCase() === 'online sales'))
+      );
+      const cardExpected = onlineRow ? onlineRow.col2ExpectedCard || 0 : 0;
+      const cardActual = onlineRow ? onlineRow.col6ActualCard || 0 : 0;
+      const cardTakings = cardExpected || cardActual;
+      const vat = onlineRow ? onlineRow.vat || 0 : 0;
+      const netTakings = Math.max(0, cardTakings - vat);
+      const diff = cardActual - cardExpected;
+      const isMatch = Math.abs(diff) < 0.005;
+      return {
+        recordId: rec.id,
+        date: rec.date,
+        dayName: getDayOfWeekName(rec.date),
+        operator: rec.operator || '—',
+        cardExpected,
+        cardActual,
+        cardTakings,
+        vat,
+        netTakings,
+        diff,
+        isMatch,
+        hasRow: !!onlineRow,
+      };
+    });
+  }, [currentWeekRecords]);
+
+  const { weeklyOnlineTakingsSum, weeklyOnlineVatSum, weeklyOnlineNetSum } = useMemo(() => {
+    let takings = 0;
+    let vatSum = 0;
+    let netSum = 0;
+    onlineSalesData.forEach((d) => {
+      takings += d.cardTakings;
+      vatSum += d.vat;
+      netSum += d.netTakings;
+    });
+    return {
+      weeklyOnlineTakingsSum: takings,
+      weeklyOnlineVatSum: vatSum,
+      weeklyOnlineNetSum: netSum,
+    };
+  }, [onlineSalesData]);
+
   // Recharts trend data (chronological order Monday -> Sunday)
   const chartData = currentWeekRecords.map((rec) => {
     const t = calculateGrandTotals(rec.rows, rec, records);
@@ -159,6 +209,38 @@ export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
         weeklyBankingSum.toFixed(2),
         weeklyCardSum.toFixed(2),
         weeklyVarianceSum.toFixed(2),
+      ].join(',')
+    );
+
+    lines.push('');
+    lines.push('=== WEEKLY ONLINE SALES & VAT AUDIT ===');
+    lines.push('Day,Date,Operator,Sys Card (2),Card PDQ (6),Total Online Takings,Online VAT,Net Ex-VAT,Status');
+    onlineSalesData.forEach((d) => {
+      lines.push(
+        [
+          d.dayName,
+          formatToUKDate(d.date),
+          `"${d.operator}"`,
+          d.cardExpected.toFixed(2),
+          d.cardActual.toFixed(2),
+          d.cardTakings.toFixed(2),
+          d.vat.toFixed(2),
+          d.netTakings.toFixed(2),
+          d.isMatch ? 'MATCHED' : `DIFF: £${d.diff.toFixed(2)}`,
+        ].join(',')
+      );
+    });
+    lines.push(
+      [
+        'ONLINE SALES TOTALS',
+        '',
+        '',
+        onlineSalesData.reduce((s, d) => s + d.cardExpected, 0).toFixed(2),
+        onlineSalesData.reduce((s, d) => s + d.cardActual, 0).toFixed(2),
+        weeklyOnlineTakingsSum.toFixed(2),
+        weeklyOnlineVatSum.toFixed(2),
+        weeklyOnlineNetSum.toFixed(2),
+        onlineSalesData.every((d) => d.isMatch) ? 'ALL MATCHED' : 'DISCREPANCIES MONITORED',
       ].join(',')
     );
 
@@ -255,6 +337,13 @@ export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
         <div class="card-title">Net Variance</div>
         <div class="card-val">${formatCurrency(weeklyVarianceSum, true)}</div>
       </div>
+      <div class="card" style="background: #f0f9ff; border: 2px solid #0284c7;">
+        <div class="card-title" style="color: #0369a1;">Online Sales &amp; VAT</div>
+        <div class="card-val" style="color: #0c4a6e;">${formatCurrency(weeklyOnlineTakingsSum)}</div>
+        <div style="font-size: 10px; font-family: monospace; color: #0284c7; margin-top: 3px;">
+          VAT: <strong>${formatCurrency(weeklyOnlineVatSum)}</strong> | Net: ${formatCurrency(weeklyOnlineNetSum)}
+        </div>
+      </div>
     </div>
 
     <table>
@@ -288,6 +377,54 @@ export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
         </tr>
       </tfoot>
     </table>
+
+    <div style="margin-top: 24px; border: 2px solid #000; background: #fff;">
+      <div style="background: #0c4a6e; color: #fff; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center;">
+        <strong style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em;">Weekly Online Sales &amp; VAT Audit (Card Settlements)</strong>
+        <span style="font-family: monospace; font-size: 11px;">Total VAT: <strong>${formatCurrency(weeklyOnlineVatSum)}</strong> | Net Ex-VAT: <strong>${formatCurrency(weeklyOnlineNetSum)}</strong></span>
+      </div>
+      <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+        <thead>
+          <tr style="background: #000; color: #fff;">
+            <th style="padding: 8px;">Date</th>
+            <th style="padding: 8px;">Operator</th>
+            <th style="padding: 8px; text-align: right;">Sys Card (2)</th>
+            <th style="padding: 8px; text-align: right;">PDQ Card (6)</th>
+            <th style="padding: 8px; text-align: right; background: #27272a;">Online Takings</th>
+            <th style="padding: 8px; text-align: right; background: #0369a1; color: #fff;">Online VAT</th>
+            <th style="padding: 8px; text-align: right;">Net Ex-VAT</th>
+            <th style="padding: 8px; text-align: center;">Reconciliation</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${onlineSalesData.map((d) => `
+            <tr style="border-bottom: 1px solid #e4e4e7;">
+              <td style="padding: 8px; font-family: monospace;"><strong>${d.dayName.slice(0, 3)}</strong> ${formatToUKDate(d.date)}</td>
+              <td style="padding: 8px;">${d.operator}</td>
+              <td style="padding: 8px; text-align: right; font-family: monospace;">${formatCurrency(d.cardExpected)}</td>
+              <td style="padding: 8px; text-align: right; font-family: monospace;">${formatCurrency(d.cardActual)}</td>
+              <td style="padding: 8px; text-align: right; font-family: monospace; font-weight: bold; background: #f4f4f5;">${formatCurrency(d.cardTakings)}</td>
+              <td style="padding: 8px; text-align: right; font-family: monospace; font-weight: bold; background: #e0f2fe; color: #0369a1;">${formatCurrency(d.vat)}</td>
+              <td style="padding: 8px; text-align: right; font-family: monospace;">${formatCurrency(d.netTakings)}</td>
+              <td style="padding: 8px; text-align: center; font-size: 10px; font-weight: bold;">
+                ${d.cardTakings === 0 && d.vat === 0 ? '<span style="color: #a1a1aa;">No Orders</span>' : d.isMatch ? '<span style="color: #15803d;">MATCHED</span>' : `<span style="color: #b91c1c;">DIFF: £${d.diff.toFixed(2)}</span>`}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+        <tfoot>
+          <tr style="background: #000; color: #fff; font-family: monospace; font-weight: 900;">
+            <td style="padding: 8px;" colspan="2">ONLINE TOTALS</td>
+            <td style="padding: 8px; text-align: right;">${formatCurrency(onlineSalesData.reduce((s, d) => s + d.cardExpected, 0))}</td>
+            <td style="padding: 8px; text-align: right;">${formatCurrency(onlineSalesData.reduce((s, d) => s + d.cardActual, 0))}</td>
+            <td style="padding: 8px; text-align: right; color: #fbbf24;">${formatCurrency(weeklyOnlineTakingsSum)}</td>
+            <td style="padding: 8px; text-align: right; background: #0369a1; color: #fbbf24;">${formatCurrency(weeklyOnlineVatSum)}</td>
+            <td style="padding: 8px; text-align: right;">${formatCurrency(weeklyOnlineNetSum)}</td>
+            <td style="padding: 8px; text-align: center; font-size: 10px; color: #4ade80;">${onlineSalesData.every((d) => d.isMatch) ? 'RECONCILED' : 'MONITORED'}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
 
     <script>
       window.onload = function() {
@@ -482,7 +619,7 @@ export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
       </div>
 
       {/* Weekly Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="bg-white p-5 border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
           <div className="flex items-center justify-between text-[10px] font-bold text-zinc-600 uppercase tracking-[0.2em] mb-1">
             <span>Weekly Expected</span>
@@ -558,6 +695,30 @@ export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
           <p className="text-xs font-mono text-zinc-500 mt-1">
             Across {currentWeekRecords.length} recorded days
           </p>
+        </div>
+
+        {/* 5. Online Sales & VAT KPI Card */}
+        <div className="bg-white p-5 border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
+          <div className="flex items-center justify-between text-[10px] font-bold text-zinc-600 uppercase tracking-[0.2em] mb-1">
+            <span className="flex items-center gap-1">
+              <Globe className="w-3.5 h-3.5 text-sky-700" />
+              Online Sales &amp; VAT
+            </span>
+            <span className="bg-sky-100 text-sky-900 border border-sky-400 text-[9px] px-1.5 py-0.2 rounded font-black">
+              Card Only
+            </span>
+          </div>
+          <p className="text-2xl font-mono font-bold text-black">
+            {formatCurrency(weeklyOnlineTakingsSum)}
+          </p>
+          <div className="text-xs font-mono mt-1 flex items-center justify-between text-zinc-700">
+            <span className="font-extrabold text-sky-950">
+              VAT: {formatCurrency(weeklyOnlineVatSum)}
+            </span>
+            <span className="text-zinc-500">
+              Net: {formatCurrency(weeklyOnlineNetSum)}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -832,6 +993,122 @@ export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
         </div>
       </div>
 
+      {/* Dedicated Weekly Online Sales & VAT Audit Section */}
+      <div className="bg-white border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] overflow-hidden">
+        <div className="p-4 bg-sky-900 text-white border-b-2 border-black flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 bg-black text-amber-400 border border-sky-400 shrink-0">
+              <Globe className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-serif italic font-bold text-lg text-white">
+                  Weekly Online Sales &amp; VAT Audit
+                </h3>
+                <span className="text-[10px] font-mono font-black uppercase tracking-wider bg-sky-400 text-black px-2 py-0.5 rounded">
+                  Card Only • No Float
+                </span>
+              </div>
+              <p className="text-xs text-sky-200 font-sans">
+                Non-physical credit card orders, merchant settlement, and output VAT breakdown for this calendar week
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 font-mono text-xs">
+            <div className="bg-sky-950 border border-sky-400/60 px-3 py-1.5 text-right">
+              <div className="text-[9px] uppercase tracking-wider text-sky-300 font-bold">Total Weekly VAT</div>
+              <div className="font-black text-amber-400 text-sm sm:text-base">{formatCurrency(weeklyOnlineVatSum)}</div>
+            </div>
+            <div className="bg-sky-950 border border-sky-400/60 px-3 py-1.5 text-right">
+              <div className="text-[9px] uppercase tracking-wider text-sky-300 font-bold">Net Sales (Ex-VAT)</div>
+              <div className="font-black text-white text-sm sm:text-base">{formatCurrency(weeklyOnlineNetSum)}</div>
+            </div>
+            <div className="bg-sky-950 border border-sky-400/60 px-3 py-1.5 text-right">
+              <div className="text-[9px] uppercase tracking-wider text-sky-300 font-bold">Gross Online Takings</div>
+              <div className="font-black text-white text-sm sm:text-base">{formatCurrency(weeklyOnlineTakingsSum)}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[900px] text-left border-collapse font-mono text-xs">
+            <thead className="bg-black text-white font-serif italic border-b border-black text-xs">
+              <tr>
+                <th className="py-3 px-4 font-bold">Trading Date</th>
+                <th className="py-3 px-4 font-bold">Operator</th>
+                <th className="py-3 px-4 text-right font-bold">Sys Card (2)</th>
+                <th className="py-3 px-4 text-right font-bold">Card PDQ (6)</th>
+                <th className="py-3 px-4 text-right font-black bg-zinc-900 text-amber-300 border-x border-zinc-700">Gross Online Takings</th>
+                <th className="py-3 px-4 text-right font-black bg-sky-950 text-sky-200 border-r border-sky-800">Online VAT</th>
+                <th className="py-3 px-4 text-right font-bold">Net Sales (Ex-VAT)</th>
+                <th className="py-3 px-4 text-center font-bold">Reconciliation Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-200 text-black">
+              {onlineSalesData.map((d) => (
+                <tr key={d.recordId} className="hover:bg-sky-50/50 transition-colors">
+                  <td className="py-3 px-4 font-bold text-black flex items-center gap-2">
+                    <span className="font-sans text-[10px] uppercase font-extrabold bg-zinc-200 text-zinc-900 px-1.5 py-0.5 rounded">
+                      {d.dayName.slice(0, 3)}
+                    </span>
+                    <span>{formatToUKDate(d.date)}</span>
+                  </td>
+                  <td className="py-3 px-4 text-zinc-700 font-sans">{d.operator}</td>
+                  <td className="py-3 px-4 text-right font-semibold text-zinc-800">{formatCurrency(d.cardExpected)}</td>
+                  <td className="py-3 px-4 text-right font-semibold text-zinc-800">{formatCurrency(d.cardActual)}</td>
+                  <td className="py-3 px-4 text-right font-black bg-zinc-100 text-black border-x border-zinc-200">{formatCurrency(d.cardTakings)}</td>
+                  <td className="py-3 px-4 text-right font-black bg-sky-50 text-sky-950 border-r border-zinc-200">
+                    <span className="bg-sky-200 text-sky-950 px-2 py-0.5 rounded border border-sky-400 font-bold">
+                      {formatCurrency(d.vat)}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4 text-right font-bold text-zinc-800">{formatCurrency(d.netTakings)}</td>
+                  <td className="py-3 px-4 text-center">
+                    {d.cardTakings === 0 && d.vat === 0 ? (
+                      <span className="text-[10px] text-zinc-400 font-sans">No Online Orders</span>
+                    ) : d.isMatch ? (
+                      <span className="inline-flex items-center gap-1 font-bold text-[10px] text-emerald-800 bg-emerald-100 border border-emerald-500 px-2.5 py-0.5 rounded">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-700 shrink-0" /> Matched
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 font-bold text-[10px] text-amber-900 bg-amber-100 border border-amber-500 px-2 py-0.5 rounded">
+                        <TrendingDown className="w-3 h-3 text-amber-700 shrink-0" /> Diff: £{d.diff.toFixed(2)}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="bg-black text-white font-mono font-black border-t-2 border-black text-xs sm:text-sm">
+              <tr>
+                <td className="py-3 px-4 uppercase text-amber-400 font-serif italic" colSpan={2}>
+                  WEEKLY ONLINE TOTALS
+                </td>
+                <td className="py-3 px-4 text-right">
+                  {formatCurrency(onlineSalesData.reduce((sum, d) => sum + d.cardExpected, 0))}
+                </td>
+                <td className="py-3 px-4 text-right">
+                  {formatCurrency(onlineSalesData.reduce((sum, d) => sum + d.cardActual, 0))}
+                </td>
+                <td className="py-3 px-4 text-right text-amber-400 bg-zinc-900 border-x border-zinc-800">
+                  {formatCurrency(weeklyOnlineTakingsSum)}
+                </td>
+                <td className="py-3 px-4 text-right bg-sky-950 text-amber-300 border-r border-sky-800 font-black">
+                  {formatCurrency(weeklyOnlineVatSum)}
+                </td>
+                <td className="py-3 px-4 text-right font-black">
+                  {formatCurrency(weeklyOnlineNetSum)}
+                </td>
+                <td className="py-3 px-4 text-center text-emerald-400 font-sans text-[10px] font-bold">
+                  {onlineSalesData.every((d) => d.isMatch) ? 'All Days Reconciled' : 'Discrepancies Monitored'}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
       {/* Print & PDF Export Modal */}
       {isPrintModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto print:hidden">
@@ -950,7 +1227,7 @@ export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   <div className="border-2 border-black p-3 bg-zinc-50">
                     <div className="text-[9px] font-bold uppercase text-zinc-500">Weekly Expected</div>
                     <div className="text-lg font-mono font-bold">{formatCurrency(weeklyExpectedSum)}</div>
@@ -966,6 +1243,15 @@ export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
                   <div className="border-2 border-black p-3 bg-zinc-50">
                     <div className="text-[9px] font-bold uppercase text-zinc-500">Net Variance</div>
                     <div className="text-lg font-mono font-bold">{formatCurrency(weeklyVarianceSum, true)}</div>
+                  </div>
+                  <div className="border-2 border-sky-600 p-3 bg-sky-50">
+                    <div className="text-[9px] font-bold uppercase text-sky-900 flex items-center gap-1">
+                      <Globe className="w-3 h-3 text-sky-700" /> Online Sales &amp; VAT
+                    </div>
+                    <div className="text-lg font-mono font-bold text-sky-950">{formatCurrency(weeklyOnlineTakingsSum)}</div>
+                    <div className="text-[10px] font-mono text-sky-800 mt-0.5">
+                      VAT: <strong>{formatCurrency(weeklyOnlineVatSum)}</strong>
+                    </div>
                   </div>
                 </div>
 
@@ -1015,6 +1301,58 @@ export const WeeklyReportView: React.FC<WeeklyReportViewProps> = ({
                         <td className="p-3 text-right text-white font-black text-sm sm:text-base bg-black">{formatCurrency(weeklyCardSum)}</td>
                         <td className="p-3 text-right text-white font-black text-sm sm:text-base bg-black">{formatCurrency(weeklyActualSum)}</td>
                         <td className="p-3 text-right text-white font-black text-sm sm:text-base bg-black">{formatCurrency(weeklyVarianceSum, true)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                {/* Modal Online Sales & VAT Table */}
+                <div className="border-2 border-black overflow-hidden">
+                  <div className="bg-sky-900 text-white p-2.5 flex justify-between items-center text-xs font-mono">
+                    <span className="font-bold uppercase tracking-wider flex items-center gap-1.5">
+                      <Globe className="w-3.5 h-3.5 text-sky-400" />
+                      Weekly Online Sales &amp; VAT Audit
+                    </span>
+                    <span>VAT: <strong>{formatCurrency(weeklyOnlineVatSum)}</strong> | Net Ex-VAT: <strong>{formatCurrency(weeklyOnlineNetSum)}</strong></span>
+                  </div>
+                  <table className="w-full text-xs text-left font-mono">
+                    <thead className="bg-black text-white text-[10px] uppercase font-bold">
+                      <tr>
+                        <th className="p-2">Date</th>
+                        <th className="p-2">Operator</th>
+                        <th className="p-2 text-right">Sys Card (2)</th>
+                        <th className="p-2 text-right">PDQ Card (6)</th>
+                        <th className="p-2 text-right bg-zinc-800 text-amber-300">Online Takings</th>
+                        <th className="p-2 text-right bg-sky-950 text-sky-300">Online VAT</th>
+                        <th className="p-2 text-right">Net Ex-VAT</th>
+                        <th className="p-2 text-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-200">
+                      {onlineSalesData.map((d) => (
+                        <tr key={d.recordId}>
+                          <td className="p-2 font-bold">{formatToUKDate(d.date)}</td>
+                          <td className="p-2 font-sans">{d.operator}</td>
+                          <td className="p-2 text-right">{formatCurrency(d.cardExpected)}</td>
+                          <td className="p-2 text-right">{formatCurrency(d.cardActual)}</td>
+                          <td className="p-2 text-right font-bold bg-zinc-50">{formatCurrency(d.cardTakings)}</td>
+                          <td className="p-2 text-right font-bold text-sky-900 bg-sky-50">{formatCurrency(d.vat)}</td>
+                          <td className="p-2 text-right">{formatCurrency(d.netTakings)}</td>
+                          <td className="p-2 text-center text-[10px]">
+                            {d.isMatch ? <span className="text-emerald-700 font-bold">Matched</span> : <span className="text-rose-600 font-bold">Diff £{d.diff.toFixed(2)}</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-black text-white font-bold text-xs">
+                      <tr>
+                        <td className="p-2" colSpan={2}>ONLINE TOTALS</td>
+                        <td className="p-2 text-right">{formatCurrency(onlineSalesData.reduce((s, d) => s + d.cardExpected, 0))}</td>
+                        <td className="p-2 text-right">{formatCurrency(onlineSalesData.reduce((s, d) => s + d.cardActual, 0))}</td>
+                        <td className="p-2 text-right text-amber-400">{formatCurrency(weeklyOnlineTakingsSum)}</td>
+                        <td className="p-2 text-right text-sky-300 bg-sky-950">{formatCurrency(weeklyOnlineVatSum)}</td>
+                        <td className="p-2 text-right">{formatCurrency(weeklyOnlineNetSum)}</td>
+                        <td className="p-2 text-center text-emerald-400">{onlineSalesData.every(d => d.isMatch) ? 'Reconciled' : 'Monitored'}</td>
                       </tr>
                     </tfoot>
                   </table>

@@ -9,6 +9,7 @@ import {
   getRowExpectedTotal,
   getRowVariance,
   getYesterdayFloat,
+  getWeekStartAndEnd,
 } from "../utils/calculations";
 import { exportDaySheetToPDF } from "../utils/pdfExport";
 import { RecordAuditQrCode } from "./RecordAuditQrCode";
@@ -39,6 +40,8 @@ import {
   Receipt,
   Undo2,
   Download,
+  Globe,
+  Store,
 } from "lucide-react";
 import { DecimalInput } from "./DecimalInput";
 import { CashCalculatorModal, TargetFieldType } from "./CashCalculatorModal";
@@ -55,8 +58,9 @@ interface ModernSheetFormProps {
   onSelectYear?: (year: string) => void;
   financialYearFormat?: FinancialYearFormat;
   onChangeFinancialYearFormat?: (format: FinancialYearFormat) => void;
-  onChangeRecord: (updated: SheetRecord) => void;
-  onSaveRecord: () => void;
+  onChangeRecord: (updated: SheetRecord, immediate?: boolean) => void;
+  onSaveRecord: (targetRecord?: SheetRecord) => void;
+  onToggleLock?: (targetRecord?: SheetRecord) => void;
   onAddRecord: () => void;
   onDeleteRecord: () => void;
   onOpenWeeklyReport: () => void;
@@ -85,6 +89,7 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
   onChangeFinancialYearFormat,
   onChangeRecord,
   onSaveRecord,
+  onToggleLock,
   onAddRecord,
   onDeleteRecord,
   onOpenWeeklyReport,
@@ -131,12 +136,51 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
 
   const totals = calculateGrandTotals(record.rows, record, allRecords);
   const isLocked = record.isSaved;
+  const onlineSalesIdx = record.rows.findIndex((r) => r.isOnlineOrders);
+  const onlineSalesRow = onlineSalesIdx >= 0 ? record.rows[onlineSalesIdx] : null;
+
+  const currentWeekInfo = React.useMemo(() => {
+    if (!record.date) return null;
+    return getWeekStartAndEnd(record.date);
+  }, [record.date]);
+
+  const weekOnlineSalesTotal = React.useMemo(() => {
+    if (!currentWeekInfo) return 0;
+    const weekRecords = (allRecords || []).filter(
+      (r) => r.date && r.date >= currentWeekInfo.mondayISO && r.date <= currentWeekInfo.sundayISO
+    );
+    let total = 0;
+    let foundCurrent = false;
+    weekRecords.forEach((r) => {
+      if (r.id === record.id) {
+        foundCurrent = true;
+        total += onlineSalesRow ? (onlineSalesRow.col2ExpectedCard || onlineSalesRow.col6ActualCard || 0) : 0;
+      } else {
+        const row = r.rows.find((ro) => ro.isOnlineOrders);
+        if (row) {
+          total += row.col2ExpectedCard || row.col6ActualCard || 0;
+        }
+      }
+    });
+    if (!foundCurrent && onlineSalesRow) {
+      total += onlineSalesRow.col2ExpectedCard || onlineSalesRow.col6ActualCard || 0;
+    }
+    return total;
+  }, [currentWeekInfo, allRecords, record.id, onlineSalesRow]);
 
   const toggleLock = () => {
-    onChangeRecord({
-      ...record,
-      isSaved: !record.isSaved,
-    });
+    if (onToggleLock) {
+      onToggleLock(record);
+    } else {
+      onChangeRecord({
+        ...record,
+        isSaved: !record.isSaved,
+      });
+    }
+  };
+
+  const handleSave = () => {
+    onSaveRecord(record);
   };
 
   const handleRowValueChange = (
@@ -278,6 +322,36 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
         </div>
       </div>
 
+      {/* Top Banner when Record is Locked */}
+      {isLocked && (
+        <div className="bg-amber-100/95 border-2 border-black text-amber-950 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] print:hidden">
+          <div className="flex items-center gap-2.5">
+            <div className="bg-amber-400 p-1.5 border-2 border-black text-black shrink-0">
+              <Lock className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="font-bold text-xs sm:text-sm uppercase tracking-wide flex items-center gap-1.5">
+                <span>This Sheet is Saved &amp; Locked</span>
+                <span className="text-[10px] font-mono bg-black text-amber-400 px-1.5 py-0.5 rounded font-bold">
+                  FINALIZED
+                </span>
+              </div>
+              <div className="text-xs text-zinc-700 font-medium">
+                Protected against accidental edits. Click unlock to make changes.
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={toggleLock}
+            className="bg-black hover:bg-zinc-800 text-amber-400 font-bold text-xs uppercase tracking-wider px-3.5 py-1.5 border-2 border-black active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+          >
+            <Unlock className="w-3.5 h-3.5" />
+            Unlock Sheet to Edit
+          </button>
+        </div>
+      )}
+
       {/* Editorial Title Banner */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between border-b-2 border-black pb-4 gap-4">
         <div>
@@ -330,6 +404,9 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
               className="font-mono font-bold text-xs bg-transparent text-black focus:outline-none cursor-pointer disabled:bg-zinc-100 max-w-[150px] truncate"
             >
               <option value="">-- Select Operator --</option>
+              {record.operator && !operators.includes(record.operator) && (
+                <option value={record.operator}>{record.operator}</option>
+              )}
               {operators.map((op) => (
                 <option key={op} value={op}>
                   {op}
@@ -352,6 +429,38 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
               <Users className="w-3 h-3 text-amber-400" />
               Edit Staff
             </button>
+          </div>
+
+          {/* Day Till Total and Day Online Sales Quick Reference Tokens */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <div
+              className="flex items-center gap-1 bg-white border-2 border-black px-2 py-1 shadow-xs"
+              title={`Day Till Total: ${formatCurrency(totals.totalCol3Expected)} (Sys Col 3 Expected Takings)`}
+            >
+              <span className="text-[9px] font-mono font-black uppercase text-zinc-600">Till Total:</span>
+              <span className="font-mono font-bold text-xs text-black">{formatCurrency(totals.totalCol3Expected)}</span>
+            </div>
+            {onlineSalesRow && (
+              <div
+                className="flex items-center gap-1 bg-sky-100 border-2 border-sky-600 px-2 py-1 shadow-xs text-sky-950"
+                title={`Day Online Sales: ${formatCurrency(onlineSalesRow.col2ExpectedCard || 0)} (Card only • Separate from till drawer)`}
+              >
+                <Globe className="w-3.5 h-3.5 text-sky-700 shrink-0" />
+                <span className="text-[9px] font-mono font-black uppercase text-sky-900">Day Online:</span>
+                <span className="font-mono font-black text-xs text-sky-950">{formatCurrency(onlineSalesRow.col2ExpectedCard || 0)}</span>
+              </div>
+            )}
+            {onlineSalesRow && (
+              <div
+                className="flex items-center gap-1 bg-sky-100 border-2 border-sky-600 px-2 py-1 shadow-xs text-sky-950 cursor-pointer hover:bg-sky-200 transition-colors"
+                onClick={onOpenWeeklyReport}
+                title={`Week Online Sales: ${formatCurrency(weekOnlineSalesTotal)} (Click to view Weekly Report)`}
+              >
+                <Globe className="w-3.5 h-3.5 text-sky-700 shrink-0" />
+                <span className="text-[9px] font-mono font-black uppercase text-sky-900">Week Online:</span>
+                <span className="font-mono font-black text-xs text-sky-950">{formatCurrency(weekOnlineSalesTotal)}</span>
+              </div>
+            )}
           </div>
 
         <div className="flex flex-wrap items-center gap-1.5 ml-auto">
@@ -430,21 +539,53 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
             </button>
           )}
 
-          {/* Status Badge */}
-          <span
-            className={`text-xs px-2 py-1 font-bold uppercase tracking-wider border-2 ${
+          {/* Status Badge - Clickable Toggle */}
+          <button
+            type="button"
+            onClick={toggleLock}
+            title={isLocked ? "Sheet is Locked. Click to Unlock for edits." : "Sheet is Unlocked. Click to Lock and prevent edits."}
+            className={`text-xs px-2.5 py-1 font-bold uppercase tracking-wider border-2 transition-all cursor-pointer active:scale-95 ${
               isLocked
-                ? "bg-amber-400 border-black text-black"
-                : "bg-white border-black text-black"
-            } flex items-center gap-1`}
+                ? "bg-amber-400 border-black text-black hover:bg-amber-300"
+                : "bg-white border-black text-emerald-800 hover:bg-emerald-50"
+            } flex items-center gap-1.5`}
           >
             {isLocked ? (
-              <Lock className="w-3 h-3" />
+              <>
+                <Lock className="w-3.5 h-3.5" />
+                <span>Locked (Unlock)</span>
+              </>
             ) : (
-              <Unlock className="w-3 h-3" />
+              <>
+                <Unlock className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Editable (Lock)</span>
+              </>
             )}
-            {isLocked ? "Locked" : "Draft"}
-          </span>
+          </button>
+
+          {/* Quick Save Sheet Button in Header */}
+          <button
+            type="button"
+            onClick={handleSave}
+            title={isLocked ? "Sheet is Saved & Locked" : "Save & Lock current sheet to cloud & device"}
+            className={`text-xs px-3 py-1 font-black uppercase tracking-wider border-2 transition-all cursor-pointer active:scale-95 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] ${
+              isLocked
+                ? "bg-emerald-600 border-black text-white hover:bg-emerald-700"
+                : "bg-red-600 border-black text-white hover:bg-red-700"
+            } flex items-center gap-1.5`}
+          >
+            {isLocked ? (
+              <>
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-200" />
+                <span>Saved</span>
+              </>
+            ) : (
+              <>
+                <Save className="w-3.5 h-3.5 text-amber-300" />
+                <span>Save Sheet</span>
+              </>
+            )}
+          </button>
         </div>
         </div>
       </div>
@@ -453,12 +594,33 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white p-5 border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
           <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600 mb-1">
-            <span>Expected Takings</span>
+            <span>Till Totals (Expected)</span>
             <Scale className="w-4 h-4 text-black" />
           </div>
-          <p className="text-2xl font-mono font-bold text-black">
-            {formatCurrency(totals.totalCol3Expected)}
-          </p>
+          <div className="flex items-baseline justify-between gap-2 flex-wrap">
+            <p className="text-2xl font-mono font-bold text-black">
+              {formatCurrency(totals.totalCol3Expected)}
+            </p>
+            {onlineSalesRow && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span
+                  className="inline-flex items-center gap-1 text-[11px] font-mono font-black bg-sky-100 text-sky-950 border border-sky-400 px-2 py-0.5 rounded shadow-2xs"
+                  title={`Day Online Sales: ${formatCurrency(onlineSalesRow.col2ExpectedCard || 0)} (Card only • Separate from till drawer)`}
+                >
+                  <Globe className="w-3.5 h-3.5 text-sky-700" />
+                  <span>Day: {formatCurrency(onlineSalesRow.col2ExpectedCard || 0)}</span>
+                </span>
+                <span
+                  className="inline-flex items-center gap-1 text-[11px] font-mono font-black bg-sky-100 text-sky-950 border border-sky-400 px-2 py-0.5 rounded shadow-2xs cursor-pointer hover:bg-sky-200 transition-colors"
+                  onClick={onOpenWeeklyReport}
+                  title={`Week Online Sales: ${formatCurrency(weekOnlineSalesTotal)} (Click to view Weekly Report)`}
+                >
+                  <Globe className="w-3.5 h-3.5 text-sky-700" />
+                  <span>Week: {formatCurrency(weekOnlineSalesTotal)}</span>
+                </span>
+              </div>
+            )}
+          </div>
           <p className="text-[11px] font-mono text-zinc-500 mt-1">
             Cash: {formatCurrency(totals.totalCol1Cash)} | Card:{" "}
             {formatCurrency(totals.totalCol2Card)}
@@ -607,14 +769,16 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
             <button
               type="button"
               onClick={onUndo}
-              disabled={!canUndo}
+              disabled={!canUndo || isLocked}
               className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider px-3 py-1.5 border-2 active:scale-95 transition-all cursor-pointer ${
-                canUndo
+                canUndo && !isLocked
                   ? "bg-zinc-100 hover:bg-zinc-200 text-black border-black shadow-xs"
                   : "bg-zinc-100 text-zinc-400 border-zinc-300 opacity-60 cursor-not-allowed"
               }`}
               title={
-                canUndo
+                isLocked
+                  ? "Unlock sheet to undo changes"
+                  : canUndo
                   ? "Undo recent changes on this sheet (Ctrl+Z)"
                   : "No changes to undo"
               }
@@ -629,24 +793,24 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
               onClick={toggleLock}
               className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider px-3 py-1.5 border-2 border-black active:scale-95 transition-all cursor-pointer ${
                 isLocked
-                  ? "bg-amber-400 hover:bg-amber-300 text-black shadow-xs"
+                  ? "bg-amber-400 hover:bg-amber-300 text-black shadow-xs font-black"
                   : "bg-white hover:bg-zinc-100 text-black shadow-xs"
               }`}
               title={
                 isLocked
-                  ? "Sheet is Locked. Click to Unlock."
-                  : "Sheet is Unlocked. Click to Lock."
+                  ? "Sheet is Locked. Click to Unlock for edits."
+                  : "Sheet is Unlocked. Click to Lock and prevent edits."
               }
             >
               {isLocked ? (
                 <>
-                  <Lock className="w-3.5 h-3.5 text-black" />
-                  <span>Locked (Unlock)</span>
+                  <Unlock className="w-3.5 h-3.5 text-black" />
+                  <span>Unlock Sheet to Edit</span>
                 </>
               ) : (
                 <>
-                  <Unlock className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Unlocked (Lock)</span>
+                  <Lock className="w-3.5 h-3.5 text-black" />
+                  <span>Lock Sheet</span>
                 </>
               )}
             </button>
@@ -663,11 +827,25 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
             </button>
 
             <button
-              onClick={onSaveRecord}
-              className="flex items-center gap-1.5 bg-black hover:bg-zinc-800 text-white text-xs font-bold uppercase tracking-wider px-3.5 py-1.5 border-2 border-black active:scale-95 transition-all cursor-pointer"
+              onClick={handleSave}
+              className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider px-3.5 py-1.5 border-2 border-black active:scale-95 transition-all cursor-pointer ${
+                isLocked
+                  ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                  : "bg-black hover:bg-zinc-800 text-white"
+              }`}
+              title={isLocked ? "Sheet is finalized and locked" : "Save and lock current sheet"}
             >
-              <Save className="w-3.5 h-3.5 text-amber-400" />
-              Save Sheet
+              {isLocked ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-200" />
+                  <span>✓ Saved &amp; Locked</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Save Sheet</span>
+                </>
+              )}
             </button>
 
             <button
@@ -704,11 +882,163 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
           </div>
         </div>
 
+        {/* ========================================================= */}
+        {/* TOP SECTION: ONLINE SALES (Completely Separate) */}
+        {/* ========================================================= */}
+        {onlineSalesRow && onlineSalesIdx >= 0 && (
+          <div
+            data-online-sales="true"
+            data-row-type="online-sales"
+            className="online-sales-section mx-4 mt-4 p-4 bg-white border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] print:shadow-none print:m-0 print:p-2"
+          >
+            {/* Header */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-3 border-b-2 border-black">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-black text-amber-400 border border-black shadow-xs shrink-0">
+                  <Globe className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-base sm:text-lg font-black text-black uppercase tracking-wide">
+                      Online Sales
+                    </h2>
+                    <span className="text-[10px] font-bold uppercase tracking-wider bg-sky-100 text-sky-950 border border-sky-400 px-2 py-0.5 rounded">
+                      Card Settlement &amp; VAT
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-600 hidden sm:block">
+                    E-Commerce and direct online card takings (card only • no float or cash drawer)
+                  </p>
+                </div>
+              </div>
+
+              {/* Status */}
+              <div className="flex items-center gap-2 text-xs">
+                {Math.abs((onlineSalesRow.col2ExpectedCard || 0) - (onlineSalesRow.col6ActualCard || 0)) < 0.005 ? (
+                  <span className="inline-flex items-center gap-1 font-bold text-emerald-800 bg-emerald-100 border border-emerald-500 px-2.5 py-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>Card Takings Match ({formatCurrency(onlineSalesRow.col2ExpectedCard || 0)})</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 font-bold text-amber-900 bg-amber-100 border border-amber-500 px-2.5 py-1">
+                    <TrendingDown className="w-3.5 h-3.5 text-amber-700" />
+                    <span>
+                      Diff: £{((onlineSalesRow.col6ActualCard || 0) - (onlineSalesRow.col2ExpectedCard || 0)).toFixed(2)}
+                    </span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Online Sales Fields Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+              {/* Sys Card (2) */}
+              <div className="bg-sky-50 p-2.5 border-2 border-sky-300 rounded flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold text-xs text-sky-900">Sys Card (2)</span>
+                  {!isLocked && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenCalcForField(onlineSalesIdx, "col2ExpectedCard")}
+                      className="bg-sky-400 text-black px-1.5 py-0.5 hover:bg-sky-300 border border-black shadow-xs font-bold text-[10px] flex items-center gap-0.5 cursor-pointer active:scale-95 transition-all"
+                      title="Open Slips Adder / Calculator for Online Card Takings"
+                    >
+                      <Calculator className="w-2.5 h-2.5" />
+                      <span>Calc</span>
+                    </button>
+                  )}
+                </div>
+                <div className="bg-white border-2 border-sky-400 px-2 py-1 flex items-center rounded">
+                  <span className="text-sky-700 font-bold mr-1 text-xs">£</span>
+                  <DecimalInput
+                    disabled={isLocked}
+                    value={onlineSalesRow.col2ExpectedCard}
+                    onChange={(val) => handleRowNumericChange(onlineSalesIdx, "col2ExpectedCard", val)}
+                    placeholder="0.00"
+                    className="w-full text-right font-mono font-bold text-sky-950 focus:outline-none text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* Sys Total (3) */}
+              <div className="bg-sky-50 p-2.5 border-2 border-sky-300 rounded flex flex-col justify-between">
+                <span className="font-bold text-xs text-sky-900 mb-1">Sys Total (3)</span>
+                <div className="bg-sky-200 border-2 border-sky-400 text-sky-950 px-2 py-1 text-right font-mono font-bold text-sm rounded truncate">
+                  {formatCurrency(onlineSalesRow.col2ExpectedCard || 0)}
+                </div>
+              </div>
+
+              {/* Card PDQ (6) */}
+              <div className="bg-sky-50 p-2.5 border-2 border-sky-300 rounded flex flex-col justify-between">
+                <span className="font-bold text-xs text-sky-900 mb-1">Card PDQ (6)</span>
+                <div className="bg-white border-2 border-sky-400 px-2 py-1 flex items-center rounded">
+                  <span className="text-sky-700 font-bold mr-1 text-xs">£</span>
+                  <DecimalInput
+                    disabled={isLocked}
+                    value={onlineSalesRow.col6ActualCard}
+                    onChange={(val) => handleRowNumericChange(onlineSalesIdx, "col6ActualCard", val)}
+                    placeholder="0.00"
+                    className="w-full text-right font-mono font-bold text-sky-950 focus:outline-none text-sm"
+                  />
+                </div>
+              </div>
+
+              {/* Counted Total (7) */}
+              <div className="bg-sky-50 p-2.5 border-2 border-sky-300 rounded flex flex-col justify-between">
+                <span className="font-bold text-xs text-sky-900 mb-1">Count Total (7)</span>
+                <div className="bg-sky-200 border-2 border-sky-400 text-sky-950 px-2 py-1 text-right font-mono font-bold text-sm rounded truncate">
+                  {formatCurrency(onlineSalesRow.col6ActualCard || 0)}
+                </div>
+              </div>
+
+              {/* VAT Field (8) */}
+              <div className="bg-sky-50 p-2.5 border-2 border-sky-300 rounded flex flex-col justify-between col-span-2 sm:col-span-1">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold text-xs text-sky-900">VAT Value (8)</span>
+                  <span className="text-[9px] font-black uppercase tracking-tight text-sky-900 bg-sky-200 px-1 py-0.5 rounded border border-sky-400">
+                    VAT
+                  </span>
+                </div>
+                <div className="bg-white border-2 border-sky-400 px-2 py-1 flex items-center rounded">
+                  <span className="text-sky-700 font-bold mr-1 text-xs">£</span>
+                  <DecimalInput
+                    disabled={isLocked}
+                    value={onlineSalesRow.vat || 0}
+                    onChange={(val) => handleRowNumericChange(onlineSalesIdx, "vat", val)}
+                    placeholder="0.00"
+                    className="w-full text-right font-mono font-bold text-sky-950 focus:outline-none text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Section Heading: Normal Sales (Till Registers) */}
+        <div className="mx-4 mt-4 mb-2 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="p-1 bg-black text-amber-400 border border-black shadow-xs">
+              <Store className="w-3.5 h-3.5" />
+            </div>
+            <h2 className="text-sm sm:text-base font-black text-black tracking-wide uppercase">
+              Normal Sales (Till Registers)
+            </h2>
+            <span className="text-[10px] font-bold bg-zinc-200 text-black px-2 py-0.5 border border-black">
+              Physical In-Store Registers
+            </span>
+          </div>
+        </div>
+
         {/* Mobile Cards View */}
         <div
-          className={`${mobileViewMode === "cards" ? "block md:hidden" : "hidden"} p-4 space-y-4 bg-zinc-50 border-b-2 border-black`}
+          className={`mobile-cards-container ${mobileViewMode === "cards" ? "block md:hidden" : "hidden"} mx-4 mb-4 p-4 space-y-4 bg-zinc-50 border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] print:hidden`}
         >
           {record.rows.map((row, idx) => {
+            if (row.isOnlineOrders) {
+              // Online Sales is rendered in the dedicated top section
+              return null;
+            }
+
             if (row.isYard) {
               const yardVar = row.customVariance || 0;
               return (
@@ -976,7 +1306,7 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
 
         {/* Table Content */}
         <div
-          className={`${mobileViewMode === "table" ? "block" : "hidden md:block"} overflow-x-auto border-2 border-black`}
+          className={`tills-table-container ${mobileViewMode === "table" ? "block" : "hidden md:block"} mx-4 mb-4 overflow-x-auto border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] print:block print:overflow-visible print:m-0 print:shadow-none`}
         >
           <table className="w-full min-w-[960px] xl:min-w-full text-left text-xs sm:text-sm border-collapse">
             <thead className="bg-black text-white border-b-2 border-black text-xs font-sans">
@@ -1034,6 +1364,11 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
             </thead>
             <tbody className="divide-y divide-zinc-200 text-black font-medium">
               {record.rows.map((row, idx) => {
+                if (row.isOnlineOrders) {
+                  // Online Sales is rendered in the dedicated top section
+                  return null;
+                }
+
                 if (row.isYard) {
                   return (
                     <tr
@@ -1057,7 +1392,8 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
                 return (
                   <tr
                     key={row.id || idx}
-                    className="hover:bg-zinc-50 transition-colors"
+                    data-till-row="true"
+                    className="till-row hover:bg-zinc-50 transition-colors print:table-row"
                   >
                     <td className="py-3 px-4 font-bold text-black flex items-center justify-between">
                       <span className="font-sans">{row.name}</span>
@@ -1255,8 +1591,9 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
             {/* Grand Totals Footer */}
             <tfoot className="bg-black text-white font-mono font-bold border-t-2 border-black">
               <tr>
-                <td className="py-3.5 px-4 uppercase text-xs tracking-wider text-amber-400 font-serif italic font-normal">
-                  Grand Totals
+                <td className="py-3.5 px-4 uppercase text-xs tracking-wider text-amber-400 font-sans font-black">
+                  <span>Till Totals</span>
+                  <span className="block text-[9px] text-zinc-400 font-normal lowercase">(tills 1–5)</span>
                 </td>
                 <td className="py-3.5 px-3 text-right">
                   {formatCurrency(totals.totalCol1Cash)}
@@ -1312,6 +1649,39 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
               </tr>
             </tfoot>
           </table>
+        </div>
+
+        {/* Distinct Area Summary Banner: Tills vs Online Sales */}
+        <div className="mt-3 bg-zinc-900 text-white p-3 border-2 border-black flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <span className="bg-amber-400 text-black font-black text-[10px] px-1.5 py-0.5 uppercase tracking-wider">
+                Till Takings
+              </span>
+              <span className="font-mono font-bold text-amber-200">
+                Expected: {formatCurrency(totals.totalCol3Expected)} • Counted: {formatCurrency(totals.totalCol7Actual)}
+              </span>
+            </div>
+
+            <span className="text-zinc-600 hidden sm:inline">|</span>
+
+            <div className="flex items-center gap-1.5">
+              <span className="bg-sky-500/20 text-sky-300 border border-sky-400/40 font-bold text-[10px] px-1.5 py-0.5 uppercase tracking-wider">
+                Online Sales (Separate Area)
+              </span>
+              <span className="font-mono font-bold text-sky-200">
+                Card: {formatCurrency(onlineSalesRow?.col2ExpectedCard || onlineSalesRow?.col6ActualCard || 0)}
+                {((onlineSalesRow?.vat || 0) > 0) && ` (VAT: ${formatCurrency(onlineSalesRow?.vat || 0)})`}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 font-mono font-black text-xs">
+            <span className="text-[11px] text-zinc-400 font-sans font-bold uppercase">Combined Business Total:</span>
+            <span className="bg-black border border-zinc-700 px-2 py-0.5 text-amber-300">
+              {formatCurrency((totals.totalCol3Expected || 0) + (onlineSalesRow?.col2ExpectedCard || onlineSalesRow?.col6ActualCard || 0))}
+            </span>
+          </div>
         </div>
       </div>
 

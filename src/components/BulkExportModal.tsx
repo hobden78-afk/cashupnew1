@@ -50,35 +50,44 @@ export const BulkExportModal: React.FC<BulkExportModalProps> = ({
     totalFloat,
     totalCard,
     totalVariance,
+    totalOnlineSales,
+    totalOnlineVat,
   } = useMemo(() => {
-    const sorted = [...records].sort((a, b) => a.date.localeCompare(b.date));
+    const validRecords = (records || []).filter((r) => r && typeof r.date === 'string');
+    const sorted = [...validRecords].sort((a, b) => ((a?.date || '')).localeCompare(b?.date || ''));
     let exp = 0;
     let act = 0;
     let bank = 0;
     let flt = 0;
     let crd = 0;
     let vr = 0;
+    let online = 0;
+    let onlineVat = 0;
 
     sorted.forEach((rec) => {
-      const t = calculateGrandTotals(rec.rows, rec, sorted);
+      const t = calculateGrandTotals(rec.rows || [], rec, sorted);
       exp += t.totalCol3Expected;
       act += t.totalCol7Actual;
       bank += t.totalCol4Banking;
       flt += t.totalCol5Float;
       crd += t.totalCol6Card;
       vr += t.totalVariance;
+      online += t.onlineSalesExpected || 0;
+      onlineVat += t.onlineSalesVat || 0;
     });
 
     return {
       sortedRecords: sorted,
-      earliestDate: sorted.length > 0 ? formatToUKDate(sorted[0].date) : '—',
-      latestDate: sorted.length > 0 ? formatToUKDate(sorted[sorted.length - 1].date) : '—',
+      earliestDate: sorted.length > 0 && sorted[0]?.date ? formatToUKDate(sorted[0].date) : '—',
+      latestDate: sorted.length > 0 && sorted[sorted.length - 1]?.date ? formatToUKDate(sorted[sorted.length - 1].date) : '—',
       totalExpected: exp,
       totalActual: act,
       totalBanking: bank,
       totalFloat: flt,
       totalCard: crd,
       totalVariance: vr,
+      totalOnlineSales: online,
+      totalOnlineVat: onlineVat,
     };
   }, [records]);
 
@@ -206,6 +215,22 @@ export const BulkExportModal: React.FC<BulkExportModalProps> = ({
                 </div>
               </div>
             </div>
+
+            {totalOnlineSales > 0 && (
+              <div className="mt-2.5 pt-2 border-t border-zinc-200 flex flex-wrap items-center justify-between text-xs bg-sky-50/70 p-2 rounded border border-sky-200">
+                <div className="flex items-center gap-2">
+                  <span className="bg-sky-500/20 text-sky-800 border border-sky-400 font-bold text-[10px] px-1.5 py-0.5 rounded">
+                    ONLINE SALES (SEPARATE AREA)
+                  </span>
+                  <span className="font-mono font-bold text-sky-950">
+                    Card Takings: {formatCurrency(totalOnlineSales)} {totalOnlineVat > 0 && `• VAT: ${formatCurrency(totalOnlineVat)}`}
+                  </span>
+                </div>
+                <div className="text-[11px] font-sans text-sky-800 font-medium">
+                  Excluded from physical till takings
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Export Options Grid */}

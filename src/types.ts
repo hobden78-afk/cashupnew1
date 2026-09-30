@@ -1,7 +1,8 @@
 export interface TillRowData {
   id: string;
-  name: string; // e.g. "Till 1", "Till 2", "Till 3", "Till 4", "Till 5", "YARD"
-  isYard?: boolean; // Yard row might only have variance or specific fields
+  name: string; // e.g. "Till 1", "Till 2", "Till 3", "Till 4", "Till 5", "Online Sales"
+  isYard?: boolean; // Legacy Yard row support
+  isOnlineOrders?: boolean; // Online Sales row: Credit card only, no cash taken, card PDQ, no variance, VAT entry field
   col1ExpectedCash: number; // Col 1: System Cash Takings
   col2ExpectedCard: number; // Col 2: System Card Takings
   col4BankingCash: number;  // Col 4: Cash Banked
@@ -9,6 +10,7 @@ export interface TillRowData {
   col6ActualCard: number;   // Col 6: Card Machine PDQ Total
   customVariance?: number;  // Optional manual variance override for special rows like YARD
   prevFloat?: number;       // Previous day's float (5) carried over for this till
+  vat?: number;             // VAT value entered for Online Orders
 }
 
 export interface SheetRecord {
@@ -31,6 +33,12 @@ export interface GrandTotals {
   totalCol6Card: number;
   totalCol7Actual: number;
   totalVariance: number;
+  // Separate Online Sales fields (not included in till takings)
+  onlineSalesExpected?: number;
+  onlineSalesActual?: number;
+  onlineSalesVat?: number;
+  combinedTotalExpected?: number;
+  combinedTotalActual?: number;
 }
 
 export interface DenominationCounts {

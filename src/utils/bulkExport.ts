@@ -18,7 +18,11 @@ export function generateBulkRecordsCSV(records: SheetRecord[]): string {
   }
 
   // Sort chronologically (oldest to newest) for financial ledger standard
-  const sortedRecords = [...records].sort((a, b) => a.date.localeCompare(b.date));
+  const validRecords = (records || []).filter((r) => r && typeof r.date === 'string');
+  if (validRecords.length === 0) {
+    return 'Date,Day,Operator,Till/Register,Sys Cash,Sys Card,Sys Takings,Cash Banked,Float Cash,Card PDQ,Actual Counted,Variance,Status,Notes\n';
+  }
+  const sortedRecords = [...validRecords].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const earliestDate = formatToUKDate(sortedRecords[0].date);
   const latestDate = formatToUKDate(sortedRecords[sortedRecords.length - 1].date);
   const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
@@ -84,8 +88,9 @@ export function generateBulkRecordsCSV(records: SheetRecord[]): string {
     const notesEscaped = `"${(rec.notes || '').replace(/"/g, '""')}"`;
     const statusStr = rec.isSaved ? 'Finalised' : 'Draft / Open';
 
-    // Register Rows
+    // Physical Till Register Rows (Tills 1 to 5) - Excludes Online Sales
     rec.rows.forEach((row) => {
+      if (row.isOnlineOrders || row.id === 'online-orders') return; // Handled separately
       const expTotal = getRowExpectedTotal(row);
       const actTotal = getRowActualTotal(row);
       const variance = getRowVariance(row, rec, sortedRecords);
@@ -119,7 +124,7 @@ export function generateBulkRecordsCSV(records: SheetRecord[]): string {
         rec.date,
         dayName,
         operatorEscaped,
-        `"** ${ukDate} DAY TOTAL **"`,
+        `"** ${ukDate} TILL TOTAL (Tills 1-5) **"`,
         dayTotals.totalCol1Cash.toFixed(2),
         dayTotals.totalCol2Card.toFixed(2),
         dayTotals.totalCol3Expected.toFixed(2),
@@ -135,8 +140,34 @@ export function generateBulkRecordsCSV(records: SheetRecord[]): string {
     lines.push(''); // Blank separator between days
   });
 
+  // Online Sales (Separate Non-Till Revenue Channel) Section
+  lines.push('--- ONLINE SALES REVENUE & VAT LEDGER (SEPARATE AREA - NOT PART OF TILL TAKINGS) ---');
+  lines.push('Date (UK),ISO Date,Day,Operator,Sys Card Takings,Card PDQ Machine,VAT Value,Net Takings,Status');
+  sortedRecords.forEach((rec) => {
+    const onlineRow = rec.rows.find((r) => r.isOnlineOrders || r.id === 'online-orders');
+    if (onlineRow) {
+      const expCard = onlineRow.col2ExpectedCard || 0;
+      const actCard = onlineRow.col6ActualCard || 0;
+      const vat = onlineRow.vat || 0;
+      const net = Math.max(0, (expCard || actCard) - vat);
+      const isMatch = Math.abs(actCard - expCard) < 0.005;
+      lines.push([
+        formatToUKDate(rec.date),
+        rec.date,
+        getDayOfWeekName(rec.date),
+        `"${(rec.operator || 'Unassigned').replace(/"/g, '""')}"`,
+        expCard.toFixed(2),
+        actCard.toFixed(2),
+        vat.toFixed(2),
+        net.toFixed(2),
+        isMatch ? 'MATCHED' : 'VARIANCE',
+      ].join(','));
+    }
+  });
+  lines.push('');
+
   // Master Summary Section
-  lines.push('--- DAILY SUMMARY TOTALS SUMMARY ---');
+  lines.push('--- PHYSICAL TILLS DAILY SUMMARY TOTALS ---');
   lines.push(
     [
       'Date (UK)',
@@ -199,8 +230,9 @@ export function generateBulkRecordsCSV(records: SheetRecord[]): string {
  * Trigger immediate browser download of the single CSV file.
  */
 export function downloadBulkRecordsCSV(records: SheetRecord[]): void {
-  const csvContent = generateBulkRecordsCSV(records);
-  const sortedRecords = [...records].sort((a, b) => a.date.localeCompare(b.date));
+  const validRecords = (records || []).filter((r) => r && typeof r.date === 'string');
+  const csvContent = generateBulkRecordsCSV(validRecords);
+  const sortedRecords = [...validRecords].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const dateRangeStr =
     sortedRecords.length > 0
       ? `${sortedRecords[0].date}_to_${sortedRecords[sortedRecords.length - 1].date}`
@@ -221,11 +253,12 @@ export function downloadBulkRecordsCSV(records: SheetRecord[]): void {
  * Generate printable PDF-ready HTML for all records in the state.
  */
 export function generateBulkRecordsPdfHtml(records: SheetRecord[]): string {
-  const sortedRecords = [...records].sort((a, b) => a.date.localeCompare(b.date));
+  const validRecords = (records || []).filter((r) => r && typeof r.date === 'string');
+  const sortedRecords = [...validRecords].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const printTimestamp = `${new Date().toLocaleDateString('en-GB')} ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
 
-  const earliestDate = sortedRecords.length > 0 ? formatToUKDate(sortedRecords[0].date) : 'N/A';
-  const latestDate = sortedRecords.length > 0 ? formatToUKDate(sortedRecords[sortedRecords.length - 1].date) : 'N/A';
+  const earliestDate = sortedRecords.length > 0 && sortedRecords[0]?.date ? formatToUKDate(sortedRecords[0].date) : 'N/A';
+  const latestDate = sortedRecords.length > 0 && sortedRecords[sortedRecords.length - 1]?.date ? formatToUKDate(sortedRecords[sortedRecords.length - 1].date) : 'N/A';
 
   let grandExpected = 0;
   let grandActual = 0;

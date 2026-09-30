@@ -3,6 +3,8 @@ import React, { useState, useEffect } from 'react';
 interface DecimalInputProps {
   value: number;
   onChange: (val: number) => void;
+  onCommit?: () => void;
+  onBlur?: () => void;
   disabled?: boolean;
   placeholder?: string;
   className?: string;
@@ -13,6 +15,8 @@ interface DecimalInputProps {
 export const DecimalInput: React.FC<DecimalInputProps> = ({
   value,
   onChange,
+  onCommit,
+  onBlur,
   disabled = false,
   placeholder = '0.00',
   className = '',
@@ -65,6 +69,8 @@ export const DecimalInput: React.FC<DecimalInputProps> = ({
     const cents = digits === '' ? 0 : parseInt(digits, 10);
     const numValue = cents / 100;
     onChange(numValue);
+    if (onCommit) onCommit();
+    if (onBlur) onBlur();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {

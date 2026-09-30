@@ -18,6 +18,7 @@ import {
   Database,
   FileSpreadsheet,
   Menu,
+  Globe,
 } from 'lucide-react';
 import {
   createBlankRows,
@@ -77,6 +78,7 @@ import {
   SECURITY_DOC,
   saveRecordToCloud, 
   saveRecordToCloudImmediately,
+  flushPendingSaves,
   deleteRecordFromCloud, 
   saveOperatorsToCloud, 
   saveSecurityConfigToCloud,
@@ -95,69 +97,56 @@ const AUDIT_LOGS_STORAGE_KEY = 'delta_till_audit_logs_v1';
 const LAST_ENTERED_RECORD_ID_KEY = 'delta_till_last_entered_record_id_v1';
 
 /**
- * Find the most recently entered record in the dataset.
+ * Find the most recently active or entered record in the dataset.
  * Prioritizes:
- * 1. The record with the newest createdAt timestamp (most recently entered).
- * 2. If createdAt is identical or missing, the record with the most recent calendar date (YYYY-MM-DD).
+ * 1. The record with the newest updatedAt timestamp (most recently modified/saved across devices).
+ * 2. The record with the newest createdAt timestamp.
+ * 3. Calendar date descending (newest date first).
  */
 function getLatestEnteredRecord(recordList: SheetRecord[]): SheetRecord | undefined {
   if (!recordList || recordList.length === 0) return undefined;
 
   return [...recordList].sort((a, b) => {
-    // 1. Compare createdAt if both exist and differ significantly (> 1s)
-    const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-    const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-    if (aCreated && bCreated && Math.abs(aCreated - bCreated) > 1000) {
-      return bCreated - aCreated;
-    }
-
-    // 2. Compare calendar date descending (newest date first)
-    const aDate = a.date || '';
-    const bDate = b.date || '';
-    const dateDiff = bDate.localeCompare(aDate);
-    if (dateDiff !== 0) return dateDiff;
-
-    // 3. Compare updatedAt if available
-    const aUpdated = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-    const bUpdated = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-    if (aUpdated && bUpdated) {
+    // 1. Most recently updated/saved (highest updatedAt timestamp)
+    const aUpdated = a?.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+    const bUpdated = b?.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+    if (aUpdated && bUpdated && Math.abs(bUpdated - aUpdated) > 1000) {
       return bUpdated - aUpdated;
     }
 
-    return bCreated - aCreated;
+    // 2. Most recently created
+    const aCreated = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bCreated = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+    if (aCreated && bCreated && Math.abs(bCreated - aCreated) > 1000) {
+      return bCreated - aCreated;
+    }
+
+    // 3. Fallback: Compare calendar date descending (newest date first)
+    const aDate = a?.date || '';
+    const bDate = b?.date || '';
+    return bDate.localeCompare(aDate);
   })[0];
 }
 
 /**
  * Determine the record ID to display on startup.
- * Checks the last record entered or saved in localStorage.
- * If a newer record was entered into the database (by date or createdAt),
- * it displays that latest entered record.
+ * Checks the last record accessed/entered in localStorage.
+ * If opening on a new computer or no local preference, displays the latest entered/modified record.
  */
 function getStartupRecordId(recordList: SheetRecord[]): string | undefined {
   if (!recordList || recordList.length === 0) return undefined;
-
-  const latestEntered = getLatestEnteredRecord(recordList);
 
   try {
     const savedId = localStorage.getItem(LAST_ENTERED_RECORD_ID_KEY);
     if (savedId) {
       const savedRecord = recordList.find((r) => r.id === savedId);
       if (savedRecord) {
-        // If the latest entered record in the database is newer than the saved record,
-        // display the latest entered record
-        if (latestEntered && latestEntered.id !== savedRecord.id) {
-          const savedDate = savedRecord.date || '';
-          const latestDate = latestEntered.date || '';
-          if (latestDate > savedDate) {
-            return latestEntered.id;
-          }
-        }
         return savedRecord.id;
       }
     }
   } catch (e) {}
 
+  const latestEntered = getLatestEnteredRecord(recordList);
   return latestEntered?.id || recordList[0]?.id;
 }
 
@@ -211,6 +200,16 @@ export default function App() {
 
   const [viewMode, setViewMode] = useState<ViewMode>('classic');
   const [activeTab, setActiveTab] = useState<ActiveTab>('sheet');
+
+  const handleSwitchTab = (tab: ActiveTab) => {
+    if (activeTab === 'sheet' && tab !== 'sheet') {
+      if (latestActiveRecordRef.current) {
+        saveRecordToCloudImmediately(latestActiveRecordRef.current);
+      }
+      flushPendingSaves();
+    }
+    setActiveTab(tab);
+  };
 
   // Audit Logs State (with offline caching and seed data)
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => {
@@ -410,30 +409,87 @@ export default function App() {
           const cloudRecords: SheetRecord[] = [];
           snapshot.forEach((docSnap) => {
             const rec = docSnap.data() as SheetRecord;
-            if (rec && rec.id && !currentDeletedIds.has(rec.id)) {
-              cloudRecords.push(rec);
+            const recId = rec?.id || docSnap.id;
+            if (recId && rec?.date && typeof rec.date === 'string' && Array.isArray(rec?.rows) && !currentDeletedIds.has(recId)) {
+              cloudRecords.push({ ...rec, id: recId });
             }
           });
 
           if (cloudRecords.length > 0) {
-            // Cloud is the single source of truth for multi-user sync.
-            // Recalculate sequentially to maintain exact float cascades & balance fidelity
-            const sortedCloud = recalculateAllRecords(cloudRecords);
-            setRecords(sortedCloud);
-            try {
-              localStorage.setItem(STORAGE_KEY, JSON.stringify(sortedCloud));
-            } catch (e) {}
+            // Merge cloud records while preserving any local records with newer edits
+            setRecords((prevLocalRecords) => {
+              const localMap = new Map<string, SheetRecord>();
+              prevLocalRecords.forEach((r) => localMap.set(r.id, r));
+
+              const resultMap = new Map<string, SheetRecord>();
+
+              cloudRecords.forEach((cloudRec) => {
+                if (currentDeletedIds.has(cloudRec.id)) return;
+                const localRec = localMap.get(cloudRec.id);
+                const refRec = latestActiveRecordRef.current && latestActiveRecordRef.current.id === cloudRec.id ? latestActiveRecordRef.current : null;
+                const cloudTime = cloudRec.updatedAt ? new Date(cloudRec.updatedAt).getTime() : 0;
+                const localTime = localRec?.updatedAt ? new Date(localRec.updatedAt).getTime() : 0;
+                const refTime = refRec?.updatedAt ? new Date(refRec.updatedAt).getTime() : 0;
+
+                // Helper to detect if a record contains non-zero actual numbers/notes
+                const hasSubstantialData = (r?: SheetRecord | null) => {
+                  if (!r || !r.rows) return false;
+                  return r.rows.some((row) => 
+                    (row.col1ExpectedCash || 0) > 0 ||
+                    (row.col2ExpectedCard || 0) > 0 ||
+                    (row.col4BankingCash || 0) > 0 ||
+                    (row.col5FloatCash || 0) > 0 ||
+                    (row.col6ActualCard || 0) > 0 ||
+                    (row.vat || 0) > 0
+                  ) || !!r.notes;
+                };
+
+                const cloudHasData = hasSubstantialData(cloudRec);
+                const localHasData = hasSubstantialData(localRec);
+                const refHasData = hasSubstantialData(refRec);
+
+                // Priority: latestActiveRecordRef > localRec > cloudRec
+                if (refRec && (refTime >= cloudTime || (refRec.isSaved && !cloudRec.isSaved) || (refHasData && !cloudHasData))) {
+                  resultMap.set(cloudRec.id, refRec);
+                } else if (localRec && (localTime >= cloudTime || (localRec.isSaved && !cloudRec.isSaved) || (localHasData && !cloudHasData))) {
+                  resultMap.set(cloudRec.id, localRec);
+                  if (localHasData && !cloudHasData) {
+                    saveRecordToCloudImmediately(localRec);
+                  }
+                } else {
+                  resultMap.set(cloudRec.id, cloudRec);
+                }
+              });
+
+              // Retain any pending local record that hasn't arrived from Firestore yet
+              prevLocalRecords.forEach((localRec) => {
+                if (!currentDeletedIds.has(localRec.id) && !resultMap.has(localRec.id)) {
+                  resultMap.set(localRec.id, localRec);
+                }
+              });
+
+              if (latestActiveRecordRef.current && !currentDeletedIds.has(latestActiveRecordRef.current.id) && !resultMap.has(latestActiveRecordRef.current.id)) {
+                resultMap.set(latestActiveRecordRef.current.id, latestActiveRecordRef.current);
+              }
+
+              const merged = Array.from(resultMap.values());
+              const sortedCloud = recalculateAllRecords(merged);
+              try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(sortedCloud));
+              } catch (e) {}
+              return sortedCloud;
+            });
 
             // On initial startup / cloud load, ensure the active record is the last record entered
             if (isInitialCloudLoadRef.current) {
               isInitialCloudLoadRef.current = false;
-              const startupId = getStartupRecordId(sortedCloud);
+              const startupId = getStartupRecordId(cloudRecords);
               if (startupId) {
                 setActiveRecordId(startupId);
               }
             }
           } else {
-            // If Cloud collection is completely empty, seed INITIAL_RECORDS once
+            // If Cloud collection is completely empty, seed once
             if (!isInitialCloudSeedAttempted) {
               isInitialCloudSeedAttempted = true;
               const initialRecalculated = recalculateAllRecords(INITIAL_RECORDS);
@@ -471,7 +527,6 @@ export default function App() {
   // 2. Subscribe to Firebase Firestore real-time updates for Operators list
   useEffect(() => {
     let unsub: (() => void) | null = null;
-    let seededOps = false;
 
     try {
       unsub = onSnapshot(
@@ -481,11 +536,17 @@ export default function App() {
             const data = docSnap.data();
             if (data && Array.isArray(data.operators) && data.operators.length > 0) {
               setOperators(data.operators);
-              localStorage.setItem(OPERATORS_STORAGE_KEY, JSON.stringify(data.operators));
+              try {
+                localStorage.setItem(OPERATORS_STORAGE_KEY, JSON.stringify(data.operators));
+              } catch (e) {}
             }
-          } else if (!seededOps) {
-            seededOps = true;
-            saveOperatorsToCloud(DEFAULT_OPERATORS);
+          } else {
+            // Document doesn't exist yet: extract from current records or DEFAULT_OPERATORS
+            setOperators((prev) => {
+              const currentOps = prev.length > 0 ? prev : DEFAULT_OPERATORS;
+              saveOperatorsToCloud(currentOps);
+              return currentOps;
+            });
           }
         },
         (err) => {
@@ -750,20 +811,29 @@ export default function App() {
     return calculateGrandTotals(currentRecord.rows, currentRecord, records);
   }, [currentRecord, records]);
 
+  // Active day online sales token value (live copy)
+  const currentRecordOnlineSales = React.useMemo(() => {
+    if (!currentRecord?.rows) return 0;
+    const onlineRow = currentRecord.rows.find((r) => r.isOnlineOrders);
+    if (!onlineRow) return 0;
+    return onlineRow.col2ExpectedCard || onlineRow.col6ActualCard || 0;
+  }, [currentRecord]);
+
   // Active week statistics based on current active record date (Sys 3 week total)
   const currentWeekInfo = React.useMemo(() => {
     if (!currentRecord?.date) return null;
     return getWeekStartAndEnd(currentRecord.date);
   }, [currentRecord?.date]);
 
-  const { currentWeekSys3Total, currentWeekDaysCount } = React.useMemo(() => {
-    if (!currentWeekInfo) return { currentWeekSys3Total: 0, currentWeekDaysCount: 0 };
+  const { currentWeekSys3Total, currentWeekOnlineSalesTotal, currentWeekDaysCount } = React.useMemo(() => {
+    if (!currentWeekInfo) return { currentWeekSys3Total: 0, currentWeekOnlineSalesTotal: 0, currentWeekDaysCount: 0 };
 
     const weekRecords = records.filter(
       (r) => r.date && r.date >= currentWeekInfo.mondayISO && r.date <= currentWeekInfo.sundayISO
     );
 
     let sys3Total = 0;
+    let onlineTotal = 0;
     let foundCurrent = false;
 
     weekRecords.forEach((r) => {
@@ -771,9 +841,14 @@ export default function App() {
         foundCurrent = true;
         // Use live totals from currently active sheet if editing
         sys3Total += currentRecordTotals ? currentRecordTotals.totalCol3Expected : 0;
+        onlineTotal += currentRecordOnlineSales;
       } else {
         const totals = calculateGrandTotals(r.rows, r, records);
         sys3Total += totals.totalCol3Expected;
+        const onlineRow = r.rows.find((row) => row.isOnlineOrders);
+        if (onlineRow) {
+          onlineTotal += onlineRow.col2ExpectedCard || onlineRow.col6ActualCard || 0;
+        }
       }
     });
 
@@ -786,13 +861,15 @@ export default function App() {
       currentRecordTotals
     ) {
       sys3Total += currentRecordTotals.totalCol3Expected;
+      onlineTotal += currentRecordOnlineSales;
     }
 
     return {
       currentWeekSys3Total: sys3Total,
+      currentWeekOnlineSalesTotal: onlineTotal,
       currentWeekDaysCount: weekRecords.length + (!foundCurrent && currentRecord ? 1 : 0),
     };
-  }, [currentWeekInfo, records, currentRecord, currentRecordTotals]);
+  }, [currentWeekInfo, records, currentRecord, currentRecordTotals, currentRecordOnlineSales]);
 
   // Undo history for active day sheet
   const [undoStack, setUndoStack] = useState<SheetRecord[]>([]);
@@ -800,6 +877,7 @@ export default function App() {
   // Audit log baseline snapshot & debounce timer
   const auditBaselineRef = React.useRef<SheetRecord | null>(null);
   const auditDebounceTimerRef = React.useRef<any>(null);
+  const latestActiveRecordRef = React.useRef<SheetRecord | null>(null);
 
   // When active record changes, flush pending audit comparison, update baseline, and remember last accessed record
   useEffect(() => {
@@ -808,6 +886,7 @@ export default function App() {
       auditDebounceTimerRef.current = null;
     }
     auditBaselineRef.current = currentRecord ? JSON.parse(JSON.stringify(currentRecord)) : null;
+    latestActiveRecordRef.current = currentRecord ? JSON.parse(JSON.stringify(currentRecord)) : null;
     setUndoStack([]);
 
     if (activeRecordId) {
@@ -900,12 +979,28 @@ export default function App() {
       ...updatedRecord,
       updatedAt: new Date().toISOString(),
     };
+    latestActiveRecordRef.current = recordWithTime;
+
     setRecords((prev) => {
-      const updatedList = prev.map((r) => (r.id === recordWithTime.id ? recordWithTime : r));
-      return sortRecordsByDate(updatedList);
+      const exists = prev.some((r) => r.id === recordWithTime.id);
+      const updatedList = exists
+        ? prev.map((r) => (r.id === recordWithTime.id ? recordWithTime : r))
+        : [recordWithTime, ...prev];
+      const sorted = sortRecordsByDate(updatedList);
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(sorted));
+      } catch (e) {}
+      return sorted;
     });
+
+    // Keep active record firmly pinned to this record
+    setActiveRecordId(recordWithTime.id);
+    try {
+      localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, recordWithTime.id);
+    } catch (e) {}
+
     if (immediate) {
-      saveRecordToCloudImmediately(recordWithTime);
+      return saveRecordToCloudImmediately(recordWithTime);
     } else {
       saveRecordToCloud(recordWithTime);
     }
@@ -981,15 +1076,54 @@ export default function App() {
   };
 
   // Save & Lock current sheet
-  const handleSaveSheet = () => {
-    if (!currentRecord) return;
-    const updated = {
-      ...currentRecord,
+  const handleSaveSheet = async (targetRecord?: SheetRecord) => {
+    const targetId = targetRecord?.id || activeRecordId;
+    const base =
+      latestActiveRecordRef.current && latestActiveRecordRef.current.id === targetId
+        ? latestActiveRecordRef.current
+        : targetRecord || currentRecord;
+
+    if (!base) return;
+    const updated: SheetRecord = {
+      ...base,
       isSaved: true,
       updatedAt: new Date().toISOString(),
     };
-    handleUpdateRecord(updated, true);
-    showToast(`Sheet for ${formatToUKDate(currentRecord.date)} saved & locked successfully!`);
+    latestActiveRecordRef.current = updated;
+    await handleUpdateRecord(updated, true);
+    setActiveRecordId(updated.id);
+    try {
+      localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, updated.id);
+    } catch (e) {}
+    showToast(`🔒 Sheet for ${formatToUKDate(updated.date)} saved & locked successfully!`);
+  };
+
+  // Toggle Lock/Unlock for current sheet
+  const handleToggleLock = async (targetRecord?: SheetRecord) => {
+    const targetId = targetRecord?.id || activeRecordId;
+    const base =
+      latestActiveRecordRef.current && latestActiveRecordRef.current.id === targetId
+        ? latestActiveRecordRef.current
+        : targetRecord || currentRecord;
+
+    if (!base) return;
+    const nextLocked = !base.isSaved;
+    const updated: SheetRecord = {
+      ...base,
+      isSaved: nextLocked,
+      updatedAt: new Date().toISOString(),
+    };
+    latestActiveRecordRef.current = updated;
+    await handleUpdateRecord(updated, true);
+    setActiveRecordId(updated.id);
+    try {
+      localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, updated.id);
+    } catch (e) {}
+    showToast(
+      nextLocked
+        ? `🔒 Sheet for ${formatToUKDate(updated.date)} locked & verified.`
+        : `🔓 Sheet for ${formatToUKDate(updated.date)} unlocked for editing.`
+    );
   };
 
   // Filtered records for navigation according to active financial year
@@ -1054,6 +1188,7 @@ export default function App() {
     const initialRows = createBlankRows();
     if (prevRecord && prevRecord.rows) {
       initialRows.forEach((row) => {
+        if (row.isYard || row.isOnlineOrders) return;
         const prevRow = prevRecord.rows.find(
           (pr) => pr.id === row.id || pr.name === row.name || (pr.name && row.name && pr.name.toLowerCase() === row.name.toLowerCase())
         );
@@ -1062,6 +1197,12 @@ export default function App() {
         row.prevFloat = floatVal;
       });
     }
+
+    // Flush any pending changes on current record before creating new record
+    if (latestActiveRecordRef.current) {
+      saveRecordToCloudImmediately(latestActiveRecordRef.current);
+    }
+    flushPendingSaves();
 
     const newRec: SheetRecord = {
       id: `rec-${newDate}-${Date.now()}`,
@@ -1074,7 +1215,11 @@ export default function App() {
     };
 
     setRecords((prev) => sortRecordsByDate([newRec, ...prev]));
+    latestActiveRecordRef.current = newRec;
     saveRecordToCloudImmediately(newRec);
+    try {
+      localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, newRec.id);
+    } catch (e) {}
     addAuditLog(
       createRecordAuditEntry(
         newRec,
@@ -1092,7 +1237,9 @@ export default function App() {
     try {
       await syncAllRecordsToCloud(records);
       await saveOperatorsToCloud(operators);
-      showToast(`☁️ Cloud Sync complete! ${records.length} records backed up.`);
+      await saveSecurityConfigToCloud(securityConfig);
+      await syncAuditLogsToCloud(auditLogs);
+      showToast(`☁️ Cloud Sync complete! ${records.length} records, staff roster, security settings, and audit logs backed up to Firebase.`);
     } catch (err) {
       showToast('⚠️ Cloud sync failed. Check network connection.');
     }
@@ -1179,12 +1326,20 @@ export default function App() {
 
   // Navigate to previous saved record (or date) within active financial year
   const handlePrevRecord = () => {
+    if (latestActiveRecordRef.current) {
+      saveRecordToCloudImmediately(latestActiveRecordRef.current);
+    }
+    flushPendingSaves();
     const listToNav = navigableRecords.length > 0 ? navigableRecords : records;
     const currentIndex = listToNav.findIndex((r) => r.id === activeRecordId);
     if (currentIndex < listToNav.length - 1 && currentIndex !== -1) {
-      setActiveRecordId(listToNav[currentIndex + 1].id);
+      const nextId = listToNav[currentIndex + 1].id;
+      setActiveRecordId(nextId);
+      try { localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, nextId); } catch (e) {}
     } else if (currentIndex === -1 && listToNav.length > 0) {
-      setActiveRecordId(listToNav[0].id);
+      const nextId = listToNav[0].id;
+      setActiveRecordId(nextId);
+      try { localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, nextId); } catch (e) {}
     } else {
       showToast('You are at the oldest saved record for this view.');
     }
@@ -1192,12 +1347,20 @@ export default function App() {
 
   // Navigate to next saved record (or date) within active financial year
   const handleNextRecord = () => {
+    if (latestActiveRecordRef.current) {
+      saveRecordToCloudImmediately(latestActiveRecordRef.current);
+    }
+    flushPendingSaves();
     const listToNav = navigableRecords.length > 0 ? navigableRecords : records;
     const currentIndex = listToNav.findIndex((r) => r.id === activeRecordId);
     if (currentIndex > 0) {
-      setActiveRecordId(listToNav[currentIndex - 1].id);
+      const nextId = listToNav[currentIndex - 1].id;
+      setActiveRecordId(nextId);
+      try { localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, nextId); } catch (e) {}
     } else if (currentIndex === -1 && listToNav.length > 0) {
-      setActiveRecordId(listToNav[0].id);
+      const nextId = listToNav[0].id;
+      setActiveRecordId(nextId);
+      try { localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, nextId); } catch (e) {}
     } else {
       showToast('You are at the most recent saved record for this view.');
     }
@@ -1206,9 +1369,14 @@ export default function App() {
   // Jump to specific date or create new sheet for selected date
   const handleGoToDate = (targetDate: string) => {
     if (!targetDate) return;
+    if (latestActiveRecordRef.current) {
+      saveRecordToCloudImmediately(latestActiveRecordRef.current);
+    }
+    flushPendingSaves();
     const existing = records.find((r) => r.date === targetDate);
     if (existing) {
       setActiveRecordId(existing.id);
+      try { localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, existing.id); } catch (e) {}
       setActiveTab('sheet');
       showToast(`Jumped to day sheet for ${formatToUKDate(targetDate)}.`);
     } else {
@@ -1219,6 +1387,7 @@ export default function App() {
       const initialRows = createBlankRows();
       if (prevRecord && prevRecord.rows) {
         initialRows.forEach((row) => {
+          if (row.isYard || row.isOnlineOrders) return;
           const prevRow = prevRecord.rows.find(
             (pr) => pr.id === row.id || pr.name === row.name || (pr.name && row.name && pr.name.toLowerCase() === row.name.toLowerCase())
           );
@@ -1404,18 +1573,22 @@ export default function App() {
             {/* Quick Switch Tabs */}
             <div className="flex items-center bg-zinc-900 p-0.5 rounded-sm border border-zinc-800 gap-1">
               <button
-                onClick={() => setActiveTab('sheet')}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-xs text-xs font-extrabold uppercase tracking-wider bg-white text-black shadow-xs cursor-default"
+                onClick={() => handleSwitchTab('sheet')}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xs text-xs font-extrabold uppercase tracking-wider transition-colors cursor-pointer ${
+                  activeTab === 'sheet'
+                    ? 'bg-white text-black shadow-xs'
+                    : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+                }`}
               >
-                <Calculator className="w-3 h-3 text-black" />
+                <Calculator className="w-3 h-3" />
                 <span>Cashing Up</span>
               </button>
 
               <button
-                onClick={() => setActiveTab('records')}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-xs text-xs font-bold uppercase tracking-wider text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+                onClick={() => handleSwitchTab('records')}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-xs text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer text-zinc-400 hover:text-white hover:bg-zinc-800"
               >
-                <History className="w-3 h-3 text-zinc-400" />
+                <History className="w-3 h-3" />
                 <span>Archive</span>
                 {records.length > 0 && (
                   <span className="px-1.5 py-0.2 text-[9px] rounded-full font-mono font-bold bg-zinc-800 text-amber-400">
@@ -1425,26 +1598,26 @@ export default function App() {
               </button>
 
               <button
-                onClick={() => setActiveTab('weekly')}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-xs text-xs font-bold uppercase tracking-wider text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+                onClick={() => handleSwitchTab('weekly')}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-xs text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer text-zinc-400 hover:text-white hover:bg-zinc-800"
               >
-                <BarChart3 className="w-3 h-3 text-zinc-400" />
+                <BarChart3 className="w-3 h-3" />
                 <span className="hidden sm:inline">Weekly</span>
               </button>
 
               <button
-                onClick={() => setActiveTab('monthly')}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-xs text-xs font-bold uppercase tracking-wider text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+                onClick={() => handleSwitchTab('monthly')}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-xs text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer text-zinc-400 hover:text-white hover:bg-zinc-800"
               >
-                <TrendingUp className="w-3 h-3 text-zinc-400" />
+                <TrendingUp className="w-3 h-3" />
                 <span className="hidden sm:inline">Monthly</span>
               </button>
 
               <button
-                onClick={() => setActiveTab('audit')}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-xs text-xs font-bold uppercase tracking-wider text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+                onClick={() => handleSwitchTab('audit')}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-xs text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer text-zinc-400 hover:text-white hover:bg-zinc-800"
               >
-                <FileSpreadsheet className="w-3 h-3 text-zinc-400" />
+                <FileSpreadsheet className="w-3 h-3" />
                 <span className="hidden sm:inline">Audit Log</span>
                 <span className="sm:hidden">Audit</span>
                 {auditLogs.length > 0 && (
@@ -1455,11 +1628,11 @@ export default function App() {
               </button>
 
               <button
-                onClick={() => setActiveTab('menu')}
+                onClick={() => handleSwitchTab('menu')}
                 className="flex items-center gap-1.5 px-2 py-1 rounded-xs text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer text-amber-300 hover:text-white hover:bg-zinc-800"
                 title="Open System Menu"
               >
-                <Menu className="w-3 h-3 text-amber-400" />
+                <Menu className="w-3 h-3" />
                 <span>Menu</span>
               </button>
             </div>
@@ -1622,6 +1795,56 @@ export default function App() {
                 </div>
               )}
 
+              {/* Day Online Sales Token (Quick Reference next to Till Totals) */}
+              {currentRecord && (
+                <div
+                  id="top-dashboard-online-sales"
+                  className="flex items-center gap-2.5 bg-sky-50 border-2 border-black p-2 sm:p-2.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] shrink-0"
+                  title={`Day Online Sales for ${formatToUKDate(currentRecord.date)} (Card takings only • Separate from till drawer)`}
+                >
+                  <div className="flex flex-col">
+                    <div className="text-[10px] font-mono font-black uppercase text-sky-950 flex items-center gap-1.5 tracking-tight">
+                      <span className="bg-sky-400 text-slate-950 font-mono font-black text-[9px] px-1 border border-black rounded-xs">
+                        @
+                      </span>
+                      <Globe className="w-3.5 h-3.5 text-sky-700 shrink-0" />
+                      <span>Day Online Sales</span>
+                    </div>
+                    <div className="bg-sky-100 border-2 border-slate-900 rounded px-3 py-1 mt-1 text-right font-black text-sky-950 text-base sm:text-xl font-mono shadow-xs flex items-center justify-between gap-2">
+                      <span className="text-[9px] font-mono font-bold text-sky-700 uppercase tracking-tight">Card</span>
+                      <span>{formatCurrency(currentRecordOnlineSales)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Week Online Sales Token (Quick Reference next to Day Total & Week Total) */}
+              {currentRecord && currentWeekInfo && (
+                <div
+                  id="top-dashboard-week-online-sales"
+                  className="flex items-center gap-2.5 bg-sky-50 border-2 border-black p-2 sm:p-2.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] shrink-0 cursor-pointer hover:bg-sky-100/70 transition-colors"
+                  onClick={() => setActiveTab('weekly')}
+                  title={`Live Week Online Sales for ${currentWeekInfo.label} (${currentWeekDaysCount} ${currentWeekDaysCount === 1 ? 'day' : 'days'} logged) - Click to view Weekly Report`}
+                >
+                  <div className="flex flex-col">
+                    <div className="text-[10px] font-mono font-black uppercase text-sky-950 flex items-center gap-1.5 tracking-tight">
+                      <span className="bg-sky-500 text-white font-mono font-black text-[9px] px-1 border border-black rounded-xs">
+                        W@
+                      </span>
+                      <Globe className="w-3.5 h-3.5 text-sky-700 shrink-0" />
+                      <span>Week Online</span>
+                      <span className="text-zinc-500 font-normal">
+                        ({currentWeekInfo.mondayUK.slice(0, 5)}–{currentWeekInfo.sundayUK.slice(0, 5)})
+                      </span>
+                    </div>
+                    <div className="bg-sky-100 border-2 border-slate-900 rounded px-3 py-1 mt-1 text-right font-black text-sky-950 text-base sm:text-xl font-mono shadow-xs flex items-center justify-between gap-2">
+                      <span className="text-[9px] font-mono font-bold text-sky-700 uppercase tracking-tight">Week</span>
+                      <span>{formatCurrency(currentWeekOnlineSalesTotal)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Week Total Field Copy (Col 3 Sys Total for calendar week of active day sheet) */}
               {currentRecord && currentWeekInfo && (
                 <div
@@ -1721,6 +1944,7 @@ export default function App() {
                 allRecords={records}
                 onChangeRecord={handleUpdateRecord}
                 onSaveRecord={handleSaveSheet}
+                onToggleLock={handleToggleLock}
                 onAddRecord={handleAddNewRecord}
                 onDeleteRecord={handleDeleteActiveRecord}
                 onOpenWeeklyReport={() => setActiveTab('weekly')}
@@ -1749,6 +1973,7 @@ export default function App() {
                 allRecords={records}
                 onChangeRecord={handleUpdateRecord}
                 onSaveRecord={handleSaveSheet}
+                onToggleLock={handleToggleLock}
                 onAddRecord={handleAddNewRecord}
                 onDeleteRecord={handleDeleteActiveRecord}
                 onOpenWeeklyReport={() => setActiveTab('weekly')}

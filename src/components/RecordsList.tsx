@@ -298,10 +298,10 @@ export const RecordsList: React.FC<RecordsListProps> = ({
       const totalsB = calculateGrandTotals(b.rows, b, records);
 
       if (sortBy === 'date-desc') {
-        return b.date.localeCompare(a.date);
+        return (b?.date || '').localeCompare(a?.date || '');
       }
       if (sortBy === 'date-asc') {
-        return a.date.localeCompare(b.date);
+        return (a?.date || '').localeCompare(b?.date || '');
       }
       if (sortBy === 'revenue-desc') {
         return totalsB.totalCol7Actual - totalsA.totalCol7Actual;
@@ -859,7 +859,12 @@ export const RecordsList: React.FC<RecordsListProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4 text-right font-mono">
-                        {formatCurrency(totals.totalCol3Expected)}
+                        <div className="font-bold">{formatCurrency(totals.totalCol3Expected)}</div>
+                        {(totals.onlineSalesExpected || 0) > 0 && (
+                          <div className="text-[10px] text-sky-700 font-sans font-bold flex items-center justify-end gap-1 mt-0.5" title="Separate Online Sales">
+                            <span className="bg-sky-50 border border-sky-200 px-1 rounded">🌐 {formatCurrency(totals.onlineSalesExpected || 0)} online</span>
+                          </div>
+                        )}
                       </td>
 
                       <td className="py-3.5 px-4 text-right font-mono font-bold">

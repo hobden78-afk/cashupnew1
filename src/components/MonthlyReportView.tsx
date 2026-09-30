@@ -50,6 +50,7 @@ import {
   Building2,
   Check,
   Loader2,
+  Globe,
 } from 'lucide-react';
 import { FinancialYearSwitcher, FinancialYearFormat } from './FinancialYearSwitcher';
 import { exportMonthlyReportToPDF } from '../utils/pdfExport';
@@ -149,7 +150,7 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
     }
 
     return Array.from(map.entries())
-      .sort((a, b) => b[0].localeCompare(a[0]))
+      .sort((a, b) => (b[0] || '').localeCompare(a[0] || ''))
       .map(([key, data]) => ({ key, ...data }));
   }, [sortedRecords]);
 
@@ -301,6 +302,68 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
     };
   }, [filteredRecords, records]);
 
+  // Monthly / Range Online Sales & VAT Summary
+  const { monthlyOnlineRows, monthlyOnlineTotals } = useMemo(() => {
+    let cardExpected = 0;
+    let cardActual = 0;
+    let cardTakings = 0;
+    let vatSum = 0;
+    let netSum = 0;
+    let activeDays = 0;
+
+    const rows = filteredRecords.map((rec) => {
+      const onlineRow = rec.rows.find(
+        (r) =>
+          r.isOnlineOrders ||
+          r.id === 'online-orders' ||
+          (r.name && (r.name.toLowerCase() === 'online orders' || r.name.toLowerCase() === 'online sales'))
+      );
+      const cExp = onlineRow ? onlineRow.col2ExpectedCard || 0 : 0;
+      const cAct = onlineRow ? onlineRow.col6ActualCard || 0 : 0;
+      const cTakings = cExp || cAct;
+      const vat = onlineRow ? onlineRow.vat || 0 : 0;
+      const net = Math.max(0, cTakings - vat);
+      const diff = cAct - cExp;
+      const isMatch = Math.abs(diff) < 0.005;
+
+      if (cTakings > 0 || vat > 0) {
+        activeDays++;
+      }
+      cardExpected += cExp;
+      cardActual += cAct;
+      cardTakings += cTakings;
+      vatSum += vat;
+      netSum += net;
+
+      return {
+        recordId: rec.id,
+        date: rec.date,
+        dayName: getDayOfWeekName(rec.date),
+        operator: rec.operator || '—',
+        cardExpected: cExp,
+        cardActual: cAct,
+        cardTakings: cTakings,
+        vat,
+        netTakings: net,
+        diff,
+        isMatch,
+        hasRow: !!onlineRow,
+      };
+    });
+
+    return {
+      monthlyOnlineRows: rows,
+      monthlyOnlineTotals: {
+        cardExpected,
+        cardActual,
+        cardTakings,
+        vatSum,
+        netSum,
+        activeDays,
+      },
+    };
+  }, [filteredRecords]);
+
   // Aggregation by Register / Till Row across the date range
   const registerBreakdown = useMemo(() => {
     const map = new Map<
@@ -308,6 +371,7 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
       {
         name: string;
         isYard: boolean;
+        isOnlineOrders: boolean;
         col1ExpectedCash: number;
         col2ExpectedCard: number;
         col3ExpectedTotal: number;
@@ -316,17 +380,21 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
         col6ActualCard: number;
         col7ActualTotal: number;
         variance: number;
+        vat: number;
         count: number;
       }
     >();
 
     filteredRecords.forEach((rec) => {
       rec.rows.forEach((row) => {
+        const isOnline = !!row.isOnlineOrders || row.id === 'online-orders' || (!!row.name && (row.name.toLowerCase() === 'online orders' || row.name.toLowerCase() === 'online sales'));
+        if (isOnline || row.isYard) return; // Online sales are a separate non-till area
         const key = row.name || 'Till';
         if (!map.has(key)) {
           map.set(key, {
             name: row.name,
-            isYard: !!row.isYard,
+            isYard: false,
+            isOnlineOrders: false,
             col1ExpectedCash: 0,
             col2ExpectedCard: 0,
             col3ExpectedTotal: 0,
@@ -335,6 +403,7 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
             col6ActualCard: 0,
             col7ActualTotal: 0,
             variance: 0,
+            vat: 0,
             count: 0,
           });
         }
@@ -351,6 +420,7 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
         item.col6ActualCard += row.col6ActualCard || 0;
         item.col7ActualTotal += rowAct;
         item.variance += rowVar;
+        item.vat += row.vat || 0;
         item.count += 1;
       });
     });
@@ -397,7 +467,7 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
       `Net Over/Short Variance,£${rangeTotals.varianceTotal.toFixed(2)}`,
       `Average Daily Takings,£${rangeTotals.avgDailyExpected.toFixed(2)}`,
       '',
-      '=== REGISTER / TILL SUMMARY ===',
+      '=== PHYSICAL TILL REGISTERS SUMMARY (Tills 1–5) ===',
       'Register,Expected Cash,Expected Card,Total Expected,Cash Banked,Card PDQ,Actual Total,Net Variance',
     ];
 
@@ -415,6 +485,21 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
         ].join(',')
       );
     });
+
+    lines.push('');
+    lines.push('=== ONLINE SALES SUMMARY (SEPARATE AREA - NOT INCLUDED IN TILL TAKINGS) ===');
+    lines.push('Date,Sys Card Takings,Card PDQ Machine,VAT Value,Net Takings,Status');
+    monthlyOnlineRows.forEach((d) => {
+      lines.push([
+        formatToUKDate(d.date),
+        d.cardExpected.toFixed(2),
+        d.cardActual.toFixed(2),
+        d.vat.toFixed(2),
+        d.netTakings.toFixed(2),
+        d.isMatch ? 'MATCHED' : 'VARIANCE',
+      ].join(','));
+    });
+    lines.push(`TOTALS,${monthlyOnlineTotals.cardExpected.toFixed(2)},${monthlyOnlineTotals.cardActual.toFixed(2)},${monthlyOnlineTotals.vatSum.toFixed(2)},${monthlyOnlineTotals.netSum.toFixed(2)},${monthlyOnlineRows.every(d => d.isMatch) ? 'ALL MATCHED' : 'DISCREPANCIES MONITORED'}`);
 
     lines.push('');
     lines.push('=== DAILY BREAKDOWN LEDGER ===');
@@ -458,6 +543,38 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
         rangeTotals.actualTotal.toFixed(2),
         rangeTotals.varianceTotal.toFixed(2),
         rangeTotals.varianceTotal > 0.009 ? 'NET OVER' : rangeTotals.varianceTotal < -0.009 ? 'NET SHORT' : 'BALANCED',
+      ].join(',')
+    );
+
+    lines.push('');
+    lines.push('=== ONLINE SALES & OUTPUT VAT AUDIT ===');
+    lines.push('Trading Date,Day,Operator,Sys Card (2),Card PDQ (6),Total Online Takings,Online Output VAT,Net Ex-VAT,Status');
+    monthlyOnlineRows.forEach((d) => {
+      lines.push(
+        [
+          formatToUKDate(d.date),
+          d.dayName,
+          `"${d.operator}"`,
+          d.cardExpected.toFixed(2),
+          d.cardActual.toFixed(2),
+          d.cardTakings.toFixed(2),
+          d.vat.toFixed(2),
+          d.netTakings.toFixed(2),
+          d.isMatch ? 'MATCHED' : `DIFF: £${d.diff.toFixed(2)}`,
+        ].join(',')
+      );
+    });
+    lines.push(
+      [
+        'ONLINE RANGE TOTALS',
+        '',
+        '',
+        monthlyOnlineTotals.cardExpected.toFixed(2),
+        monthlyOnlineTotals.cardActual.toFixed(2),
+        monthlyOnlineTotals.cardTakings.toFixed(2),
+        monthlyOnlineTotals.vatSum.toFixed(2),
+        monthlyOnlineTotals.netSum.toFixed(2),
+        monthlyOnlineRows.every((d) => d.isMatch) ? 'ALL MATCHED' : 'DISCREPANCIES MONITORED',
       ].join(',')
     );
 
@@ -528,38 +645,39 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
 
     const registersHtml = registerBreakdown
       .map((reg) => {
-        const varStyle =
-          reg.variance < -0.009
-            ? 'color: #dc2626; font-weight: bold;'
-            : reg.variance > 0.009
-            ? 'color: #15803d; font-weight: bold;'
-            : 'color: #000; font-weight: bold;';
+        const isOnline = !!reg.isOnlineOrders;
+        const varStyle = isOnline
+          ? 'color: #0369a1; font-weight: bold;'
+          : reg.variance < -0.009
+          ? 'color: #dc2626; font-weight: bold;'
+          : reg.variance > 0.009
+          ? 'color: #15803d; font-weight: bold;'
+          : 'color: #000; font-weight: bold;';
+
+        const col1Content = isOnline ? '—' : formatCurrency(reg.col1ExpectedCash);
+        const col4Content = isOnline ? '—' : formatCurrency(reg.col4BankingCash);
+        const varContent = isOnline
+          ? `<span style="background: #e0f2fe; color: #0369a1; padding: 2px 5px; border-radius: 3px; font-size: 10px; font-weight: 800; border: 1px solid #7dd3fc; margin-right: 4px;">VAT</span>${formatCurrency(reg.vat || 0)}`
+          : formatCurrency(reg.variance, true);
 
         return `
-          <tr style="border-bottom: 1px solid #e4e4e7;">
+          <tr class="${isOnline ? 'online-sales-row' : ''}" data-online-sales="${isOnline}" style="border-bottom: 1px solid #e4e4e7; ${isOnline ? 'background-color: #f8fafc;' : ''}">
             <td style="padding: 7px 8px; font-weight: bold;">${reg.name}</td>
-            <td style="padding: 7px 8px; text-align: right; font-family: monospace;">${formatCurrency(
-              reg.col1ExpectedCash
-            )}</td>
+            <td style="padding: 7px 8px; text-align: right; font-family: monospace;">${col1Content}</td>
             <td style="padding: 7px 8px; text-align: right; font-family: monospace;">${formatCurrency(
               reg.col2ExpectedCard
             )}</td>
             <td style="padding: 7px 8px; text-align: right; font-family: monospace; font-weight: bold; background: #fafafa;">${formatCurrency(
               reg.col3ExpectedTotal
             )}</td>
-            <td style="padding: 7px 8px; text-align: right; font-family: monospace; font-weight: bold;">${formatCurrency(
-              reg.col4BankingCash
-            )}</td>
+            <td style="padding: 7px 8px; text-align: right; font-family: monospace; font-weight: bold;">${col4Content}</td>
             <td style="padding: 7px 8px; text-align: right; font-family: monospace;">${formatCurrency(
               reg.col6ActualCard
             )}</td>
             <td style="padding: 7px 8px; text-align: right; font-family: monospace; font-weight: bold; background: #fafafa;">${formatCurrency(
               reg.col7ActualTotal
             )}</td>
-            <td style="padding: 7px 8px; text-align: right; font-family: monospace; ${varStyle}">${formatCurrency(
-          reg.variance,
-          true
-        )}</td>
+            <td style="padding: 7px 8px; text-align: right; font-family: monospace; ${varStyle}">${varContent}</td>
           </tr>
         `;
       })
@@ -643,6 +761,13 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
           rangeTotals.varianceTotal < -0.009 ? 'color:#dc2626;' : rangeTotals.varianceTotal > 0.009 ? 'color:#15803d;' : 'color:#000;'
         }">${formatCurrency(rangeTotals.varianceTotal, true)}</div>
       </div>
+      <div class="card" style="background: #f0f9ff; border: 2px solid #0284c7;">
+        <div class="card-title" style="color: #0369a1;">Online Sales &amp; VAT</div>
+        <div class="card-val" style="color: #0c4a6e;">${formatCurrency(monthlyOnlineTotals.cardTakings)}</div>
+        <div style="font-size: 10px; font-family: monospace; color: #0284c7; margin-top: 3px;">
+          VAT: <strong>${formatCurrency(monthlyOnlineTotals.vatSum)}</strong> | Net: ${formatCurrency(monthlyOnlineTotals.netSum)}
+        </div>
+      </div>
     </div>
 
     <div class="section-title">1. Register / Till Summary (Aggregated over Range)</div>
@@ -707,6 +832,49 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
           <td style="text-align: right;">${formatCurrency(rangeTotals.actualTotal)}</td>
           <td style="text-align: right;">${formatCurrency(rangeTotals.varianceTotal, true)}</td>
           <td style="text-align: center;">${rangeTotals.varianceTotal > 0.009 ? 'OVER' : rangeTotals.varianceTotal < -0.009 ? 'SHORT' : 'BALANCED'}</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="section-title" style="margin-top: 24px;">3. Online Sales &amp; Output VAT Audit (Card Settlements)</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Operator</th>
+          <th style="text-align: right;">Sys Card (2)</th>
+          <th style="text-align: right;">PDQ Card (6)</th>
+          <th style="text-align: right; background: #27272a; color: #fff;">Online Takings</th>
+          <th style="text-align: right; background: #0369a1; color: #fff;">Online Output VAT</th>
+          <th style="text-align: right;">Net Ex-VAT</th>
+          <th style="text-align: center;">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${monthlyOnlineRows.map((d) => `
+          <tr style="border-bottom: 1px solid #e4e4e7;">
+            <td style="padding: 7px 6px; font-family: monospace;"><strong>${d.dayName.slice(0, 3)}</strong> ${formatToUKDate(d.date)}</td>
+            <td style="padding: 7px 6px;">${d.operator}</td>
+            <td style="padding: 7px 6px; text-align: right; font-family: monospace;">${formatCurrency(d.cardExpected)}</td>
+            <td style="padding: 7px 6px; text-align: right; font-family: monospace;">${formatCurrency(d.cardActual)}</td>
+            <td style="padding: 7px 6px; text-align: right; font-family: monospace; font-weight: bold; background: #f4f4f5;">${formatCurrency(d.cardTakings)}</td>
+            <td style="padding: 7px 6px; text-align: right; font-family: monospace; font-weight: bold; background: #e0f2fe; color: #0369a1;">${formatCurrency(d.vat)}</td>
+            <td style="padding: 7px 6px; text-align: right; font-family: monospace;">${formatCurrency(d.netTakings)}</td>
+            <td style="padding: 7px 6px; text-align: center; font-size: 10px; font-weight: bold;">
+              ${d.cardTakings === 0 && d.vat === 0 ? '<span style="color: #a1a1aa;">No Orders</span>' : d.isMatch ? '<span style="color: #15803d;">MATCHED</span>' : `<span style="color: #b91c1c;">DIFF £${d.diff.toFixed(2)}</span>`}
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+      <tfoot>
+        <tr style="background: #000; color: #fff; font-family: monospace; font-weight: 900;">
+          <td style="padding: 8px;" colspan="2">ONLINE RANGE TOTALS</td>
+          <td style="padding: 8px; text-align: right;">${formatCurrency(monthlyOnlineTotals.cardExpected)}</td>
+          <td style="padding: 8px; text-align: right;">${formatCurrency(monthlyOnlineTotals.cardActual)}</td>
+          <td style="padding: 8px; text-align: right; color: #fbbf24;">${formatCurrency(monthlyOnlineTotals.cardTakings)}</td>
+          <td style="padding: 8px; text-align: right; background: #0369a1; color: #fbbf24;">${formatCurrency(monthlyOnlineTotals.vatSum)}</td>
+          <td style="padding: 8px; text-align: right;">${formatCurrency(monthlyOnlineTotals.netSum)}</td>
+          <td style="padding: 8px; text-align: center; font-size: 10px; color: #4ade80;">${monthlyOnlineRows.every(d => d.isMatch) ? 'RECONCILED' : 'MONITORED'}</td>
         </tr>
       </tfoot>
     </table>
@@ -1043,7 +1211,7 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
       </div>
 
       {/* Executive Summary Metrics Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">
         {/* Metric 1: Total Expected Takings */}
         <div className="bg-white border-2 border-black p-3.5 sm:p-4 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
           <div className="flex items-center justify-between text-zinc-500">
@@ -1111,7 +1279,7 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
 
         {/* Metric 5: Net Over / Short Variance */}
         <div
-          className={`col-span-2 md:col-span-1 border-2 border-black p-3.5 sm:p-4 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] ${
+          className={`border-2 border-black p-3.5 sm:p-4 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] ${
             rangeTotals.varianceTotal < -0.009
               ? 'bg-rose-50'
               : rangeTotals.varianceTotal > 0.009
@@ -1146,12 +1314,29 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
           </div>
           <div className="text-[10px] font-mono font-bold mt-1">
             {rangeTotals.varianceTotal < -0.009 ? (
-              <span className="text-rose-700">⚠️ Net Shortage over period</span>
+              <span className="text-rose-700">⚠️ Net Shortage</span>
             ) : rangeTotals.varianceTotal > 0.009 ? (
-              <span className="text-emerald-700">✓ Net Surplus over period</span>
+              <span className="text-emerald-700">✓ Net Surplus</span>
             ) : (
-              <span className="text-zinc-700">✓ Perfectly Balanced</span>
+              <span className="text-zinc-700">✓ Balanced</span>
             )}
+          </div>
+        </div>
+
+        {/* Metric 6: Online Sales & Output VAT */}
+        <div className="col-span-2 md:col-span-1 bg-white border-2 border-sky-600 p-3.5 sm:p-4 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
+          <div className="flex items-center justify-between text-sky-800">
+            <span className="text-[10px] font-mono font-extrabold uppercase tracking-wider">
+              Online Sales &amp; VAT
+            </span>
+            <Globe className="w-4 h-4 text-sky-700" />
+          </div>
+          <div className="text-xl sm:text-2xl font-black font-mono text-sky-950 mt-1">
+            {formatCurrency(monthlyOnlineTotals.cardTakings)}
+          </div>
+          <div className="text-[10px] font-mono text-sky-900 mt-1 flex justify-between font-bold">
+            <span>VAT: {formatCurrency(monthlyOnlineTotals.vatSum)}</span>
+            <span className="text-zinc-500 font-normal">Net: {formatCurrency(monthlyOnlineTotals.netSum)}</span>
           </div>
         </div>
       </div>
@@ -1326,17 +1511,144 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
         )}
       </div>
 
+      {/* Dedicated Monthly Online Sales & VAT Section */}
+      <div className="bg-white border-2 border-black p-4 sm:p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b-2 border-black pb-2.5">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 bg-black text-amber-400 border border-sky-400">
+              <Globe className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-extrabold text-sm sm:text-base text-black uppercase tracking-wider">
+                  Online Sales &amp; Output VAT Audit ({formatToUKDate(startDate)} – {formatToUKDate(endDate)})
+                </h3>
+                <span className="text-[10px] font-mono font-black uppercase tracking-wider bg-sky-200 text-sky-950 border border-sky-500 px-2 py-0.5 rounded">
+                  Card Settlements &amp; HM Revenue VAT
+                </span>
+              </div>
+              <p className="text-xs text-zinc-600">
+                Audit of non-physical sales (E-Commerce orders deposited directly to bank account, separated from physical tills)
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+            <div className="bg-sky-50 border border-sky-400 px-3 py-1 text-right">
+              <span className="text-[9px] uppercase font-bold text-sky-800 block">Total Range VAT</span>
+              <strong className="text-sm font-black text-sky-950">{formatCurrency(monthlyOnlineTotals.vatSum)}</strong>
+            </div>
+            <div className="bg-sky-50 border border-sky-400 px-3 py-1 text-right">
+              <span className="text-[9px] uppercase font-bold text-sky-800 block">Net Sales (Ex-VAT)</span>
+              <strong className="text-sm font-black text-black">{formatCurrency(monthlyOnlineTotals.netSum)}</strong>
+            </div>
+            <div className="bg-sky-900 text-white border border-black px-3 py-1 text-right">
+              <span className="text-[9px] uppercase font-bold text-sky-300 block">Total Online Takings</span>
+              <strong className="text-sm font-black text-amber-300">{formatCurrency(monthlyOnlineTotals.cardTakings)}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse border-2 border-black text-xs font-mono">
+            <thead>
+              <tr className="bg-black text-white">
+                <th className="p-2.5 text-left font-bold uppercase tracking-wider border-r border-zinc-700">Trading Date</th>
+                <th className="p-2.5 text-left font-bold uppercase tracking-wider border-r border-zinc-700">Operator</th>
+                <th className="p-2.5 text-right font-bold uppercase tracking-wider border-r border-zinc-700">Sys Card (2)</th>
+                <th className="p-2.5 text-right font-bold uppercase tracking-wider border-r border-zinc-700">Card PDQ (6)</th>
+                <th className="p-2.5 text-right font-bold uppercase tracking-wider border-r border-zinc-700 bg-zinc-900 text-amber-300">Total Online Takings</th>
+                <th className="p-2.5 text-right font-bold uppercase tracking-wider border-r border-zinc-700 bg-sky-950 text-sky-300">Online Output VAT</th>
+                <th className="p-2.5 text-right font-bold uppercase tracking-wider border-r border-zinc-700">Net Sales (Ex. VAT)</th>
+                <th className="p-2.5 text-center font-bold uppercase tracking-wider">Reconciliation Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {monthlyOnlineRows.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="p-6 text-center text-zinc-500 font-sans text-xs">
+                    No trading records found in this range.
+                  </td>
+                </tr>
+              ) : (
+                monthlyOnlineRows.map((d, idx) => (
+                  <tr
+                    key={d.recordId}
+                    className={`border-b border-zinc-300 hover:bg-sky-50/60 transition-colors ${idx % 2 === 1 ? 'bg-zinc-50' : 'bg-white'}`}
+                  >
+                    <td className="p-2.5 font-bold text-black border-r border-zinc-300 flex items-center gap-1.5">
+                      <span className="font-sans text-[10px] bg-zinc-200 text-zinc-900 font-black px-1.5 py-0.5 rounded">
+                        {d.dayName.slice(0, 3)}
+                      </span>
+                      <span>{formatToUKDate(d.date)}</span>
+                    </td>
+                    <td className="p-2.5 border-r border-zinc-300 font-sans text-zinc-800">{d.operator}</td>
+                    <td className="p-2.5 text-right border-r border-zinc-300 text-zinc-700">{formatCurrency(d.cardExpected)}</td>
+                    <td className="p-2.5 text-right border-r border-zinc-300 text-zinc-700">{formatCurrency(d.cardActual)}</td>
+                    <td className="p-2.5 text-right font-black border-r border-zinc-300 bg-zinc-100 text-black">
+                      {formatCurrency(d.cardTakings)}
+                    </td>
+                    <td className="p-2.5 text-right font-black border-r border-zinc-300 bg-sky-50 text-sky-950">
+                      <span className="bg-sky-200 text-sky-950 border border-sky-400 px-2 py-0.5 rounded font-bold">
+                        {formatCurrency(d.vat)}
+                      </span>
+                    </td>
+                    <td className="p-2.5 text-right font-semibold border-r border-zinc-300 text-zinc-800">
+                      {formatCurrency(d.netTakings)}
+                    </td>
+                    <td className="p-2.5 text-center">
+                      {d.cardTakings === 0 && d.vat === 0 ? (
+                        <span className="text-[10px] text-zinc-400 font-sans">No Online Orders</span>
+                      ) : d.isMatch ? (
+                        <span className="inline-flex items-center gap-1 font-bold text-[10px] text-emerald-800 bg-emerald-100 border border-emerald-500 px-2.5 py-0.5 rounded">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-700" /> Matched
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 font-bold text-[10px] text-amber-900 bg-amber-100 border border-amber-500 px-2 py-0.5 rounded">
+                          <TrendingDown className="w-3 h-3 text-amber-700" /> Diff: £{d.diff.toFixed(2)}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+            <tfoot>
+              <tr className="bg-black text-white font-mono font-black border-t-2 border-black text-xs">
+                <td className="p-2.5 text-left border-r border-zinc-700 text-amber-400 font-serif italic uppercase" colSpan={2}>
+                  ONLINE RANGE TOTALS ({monthlyOnlineTotals.activeDays} Days Active)
+                </td>
+                <td className="p-2.5 text-right border-r border-zinc-700">{formatCurrency(monthlyOnlineTotals.cardExpected)}</td>
+                <td className="p-2.5 text-right border-r border-zinc-700">{formatCurrency(monthlyOnlineTotals.cardActual)}</td>
+                <td className="p-2.5 text-right border-r border-zinc-700 text-amber-300 bg-zinc-900 font-black">
+                  {formatCurrency(monthlyOnlineTotals.cardTakings)}
+                </td>
+                <td className="p-2.5 text-right border-r border-zinc-700 bg-sky-950 text-amber-300 font-black">
+                  {formatCurrency(monthlyOnlineTotals.vatSum)}
+                </td>
+                <td className="p-2.5 text-right border-r border-zinc-700 font-black">
+                  {formatCurrency(monthlyOnlineTotals.netSum)}
+                </td>
+                <td className="p-2.5 text-center text-emerald-400 font-sans font-bold text-[10px]">
+                  {monthlyOnlineRows.every((d) => d.isMatch) ? 'All Days Reconciled' : 'Discrepancies Tracked'}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
       {/* Register / Till Aggregated Performance Table */}
       <div className="bg-white border-2 border-black p-4 sm:p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] space-y-3">
         <div className="flex items-center justify-between border-b-2 border-black pb-2.5">
           <div className="flex items-center gap-2">
             <Layers className="w-5 h-5 text-amber-600" />
             <h3 className="font-extrabold text-sm sm:text-base text-black uppercase tracking-wider">
-              Register / Till Summary (Aggregated over Selected Range)
+              Physical Till Registers (In-Store Takings • Tills 1–5)
             </h3>
           </div>
           <span className="text-xs font-mono font-bold text-zinc-600">
-            {registerBreakdown.length} registers active
+            {registerBreakdown.length} physical tills • Excludes Online Sales
           </span>
         </div>
 
@@ -1366,16 +1678,17 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
                 return (
                   <tr
                     key={reg.name || idx}
+                    data-online-sales={reg.isOnlineOrders ? "true" : undefined}
                     className={`border-b border-zinc-300 hover:bg-amber-50/50 transition-colors ${
-                      idx % 2 === 1 ? 'bg-zinc-50' : 'bg-white'
-                    }`}
+                      reg.isOnlineOrders ? 'online-sales-row ' : ''
+                    }${idx % 2 === 1 ? 'bg-zinc-50' : 'bg-white'}`}
                   >
                     <td className="p-2.5 font-sans font-extrabold text-black border-r border-zinc-300 flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-amber-400 border border-black" />
                       {reg.name}
                     </td>
                     <td className="p-2.5 text-right border-r border-zinc-300 text-zinc-700">
-                      {formatCurrency(reg.col1ExpectedCash)}
+                      {reg.isOnlineOrders ? '—' : formatCurrency(reg.col1ExpectedCash)}
                     </td>
                     <td className="p-2.5 text-right border-r border-zinc-300 text-zinc-700">
                       {formatCurrency(reg.col2ExpectedCard)}
@@ -1384,7 +1697,7 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
                       {formatCurrency(reg.col3ExpectedTotal)}
                     </td>
                     <td className="p-2.5 text-right font-bold border-r border-zinc-300 text-emerald-800">
-                      {formatCurrency(reg.col4BankingCash)}
+                      {reg.isOnlineOrders ? '—' : formatCurrency(reg.col4BankingCash)}
                     </td>
                     <td className="p-2.5 text-right border-r border-zinc-300 text-blue-800">
                       {formatCurrency(reg.col6ActualCard)}
@@ -1392,8 +1705,15 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
                     <td className="p-2.5 text-right font-bold border-r border-zinc-300 bg-zinc-100 text-black">
                       {formatCurrency(reg.col7ActualTotal)}
                     </td>
-                    <td className={`p-2.5 text-right font-black ${varColor}`}>
-                      {formatCurrency(reg.variance, true)}
+                    <td className={`p-2.5 text-right font-black ${reg.isOnlineOrders ? 'text-amber-900 bg-amber-50' : varColor}`}>
+                      {reg.isOnlineOrders ? (
+                        <span className="inline-flex items-center gap-1 font-bold">
+                          <span className="bg-amber-400 text-black text-[9px] px-1 py-0.5 rounded font-black">VAT</span>
+                          {formatCurrency(reg.vat)}
+                        </span>
+                      ) : (
+                        formatCurrency(reg.variance, true)
+                      )}
                     </td>
                   </tr>
                 );

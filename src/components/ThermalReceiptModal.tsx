@@ -107,7 +107,13 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
       text += `ESSENTIAL TILL BREAKDOWN:\n`;
       text += `${subDivider}\n`;
       record.rows.forEach((row) => {
-        if (row.isYard) {
+        if (row.isOnlineOrders) {
+          text += `[ ${row.name.toUpperCase()} ]\n`;
+          text += `  Sys Card:     ${formatCurrency(row.col2ExpectedCard)} (Card Only)\n`;
+          text += `  PDQ Machine:  ${formatCurrency(row.col6ActualCard)}\n`;
+          text += `  VAT Entered:  ${formatCurrency(row.vat || 0)}\n`;
+          text += `  Variance:     None (Online Sales)\n`;
+        } else if (row.isYard) {
           const yVar = row.customVariance || 0;
           text += `[ ${row.name.toUpperCase()} ]\n`;
           text += `  Variance: ${formatCurrency(yVar, true)} (${yVar < 0 ? 'SHORT' : yVar > 0 ? 'OVER' : 'OK'})\n`;
@@ -187,6 +193,26 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
 
     const rowsHtml = record.rows
       .map((row) => {
+        if (row.isOnlineOrders) {
+          return `
+            <div class="till-block">
+              <div class="till-name">${row.name.toUpperCase()}</div>
+              <div class="row-flex text-muted">
+                <span>Sys Card Takings:</span>
+                <span class="bold">${formatCurrency(row.col2ExpectedCard)}</span>
+              </div>
+              <div class="row-flex text-muted">
+                <span>Card PDQ:</span>
+                <span class="bold">${formatCurrency(row.col6ActualCard)}</span>
+              </div>
+              <div class="row-flex">
+                <span>VAT Entered:</span>
+                <span class="bold">${formatCurrency(row.vat || 0)}</span>
+              </div>
+            </div>
+          `;
+        }
+
         if (row.isYard) {
           const yVar = row.customVariance || 0;
           return `
@@ -715,6 +741,27 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({
                 </div>
                 <div className="space-y-3">
                   {record.rows.map((row, idx) => {
+                    if (row.isOnlineOrders) {
+                      return (
+                        <div key={row.id || idx} className="border-b border-dotted border-zinc-400 pb-1.5 last:border-b-0">
+                          <div className="flex justify-between items-baseline font-black text-xs uppercase">
+                            <span>{row.name}</span>
+                            <span className="text-[10px] text-zinc-500 font-sans font-bold">CARD ONLY</span>
+                          </div>
+                          <div className="flex justify-between text-[11px] text-zinc-600 mt-0.5">
+                            <span>Sys Card / PDQ:</span>
+                            <span className="font-mono font-bold text-black">{formatCurrency(row.col2ExpectedCard)} / {formatCurrency(row.col6ActualCard)}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-[11px] mt-0.5">
+                            <span className="text-zinc-600 font-bold">VAT Amount:</span>
+                            <span className="font-black font-mono text-black">
+                              {formatCurrency(row.vat || 0)}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    }
+
                     if (row.isYard) {
                       const yVar = row.customVariance || 0;
                       return (

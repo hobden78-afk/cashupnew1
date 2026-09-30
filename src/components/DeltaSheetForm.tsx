@@ -10,6 +10,7 @@ import {
   getRowVariance,
   getYesterdayFloat,
   parseUKDateToISO,
+  getWeekStartAndEnd,
 } from "../utils/calculations";
 import { exportDaySheetToPDF } from "../utils/pdfExport";
 import { RecordAuditQrCode } from "./RecordAuditQrCode";
@@ -17,6 +18,7 @@ import {
   Calculator,
   Lock,
   Unlock,
+  Save,
   AlertTriangle,
   TrendingUp,
   TrendingDown,
@@ -32,6 +34,8 @@ import {
   Receipt,
   Undo2,
   Download,
+  Globe,
+  Store,
 } from "lucide-react";
 import { CashCalculatorModal, TargetFieldType } from "./CashCalculatorModal";
 import { OperatorModal } from "./OperatorModal";
@@ -51,8 +55,9 @@ interface DeltaSheetFormProps {
   onSelectYear?: (year: string) => void;
   financialYearFormat?: FinancialYearFormat;
   onChangeFinancialYearFormat?: (format: FinancialYearFormat) => void;
-  onChangeRecord: (updated: SheetRecord) => void;
-  onSaveRecord: () => void;
+  onChangeRecord: (updated: SheetRecord, immediate?: boolean) => void;
+  onSaveRecord: (targetRecord?: SheetRecord) => void;
+  onToggleLock?: (targetRecord?: SheetRecord) => void;
   onAddRecord: () => void;
   onDeleteRecord: () => void;
   onOpenWeeklyReport: () => void;
@@ -81,6 +86,7 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
   onChangeFinancialYearFormat,
   onChangeRecord,
   onSaveRecord,
+  onToggleLock,
   onAddRecord,
   onDeleteRecord,
   onOpenWeeklyReport,
@@ -127,6 +133,37 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
 
   const totals = calculateGrandTotals(record.rows, record, allRecords);
   const isLocked = record.isSaved;
+  const onlineSalesIdx = record.rows.findIndex((r) => r.isOnlineOrders);
+  const onlineSalesRow = onlineSalesIdx >= 0 ? record.rows[onlineSalesIdx] : null;
+
+  const currentWeekInfo = React.useMemo(() => {
+    if (!record.date) return null;
+    return getWeekStartAndEnd(record.date);
+  }, [record.date]);
+
+  const weekOnlineSalesTotal = React.useMemo(() => {
+    if (!currentWeekInfo) return 0;
+    const weekRecords = (allRecords || []).filter(
+      (r) => r.date && r.date >= currentWeekInfo.mondayISO && r.date <= currentWeekInfo.sundayISO
+    );
+    let total = 0;
+    let foundCurrent = false;
+    weekRecords.forEach((r) => {
+      if (r.id === record.id) {
+        foundCurrent = true;
+        total += onlineSalesRow ? (onlineSalesRow.col2ExpectedCard || onlineSalesRow.col6ActualCard || 0) : 0;
+      } else {
+        const row = r.rows.find((ro) => ro.isOnlineOrders);
+        if (row) {
+          total += row.col2ExpectedCard || row.col6ActualCard || 0;
+        }
+      }
+    });
+    if (!foundCurrent && onlineSalesRow) {
+      total += onlineSalesRow.col2ExpectedCard || onlineSalesRow.col6ActualCard || 0;
+    }
+    return total;
+  }, [currentWeekInfo, allRecords, record.id, onlineSalesRow]);
 
   const handleDateChange = (val: string) => {
     // If entered as DD/MM/YYYY or YYYY-MM-DD
@@ -179,6 +216,7 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
     index: number,
     field: keyof TillRowData,
     numVal: number,
+    immediate = false,
   ) => {
     if (isLocked) return;
     const updatedRows = [...record.rows];
@@ -201,10 +239,21 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
       };
     }
 
-    onChangeRecord({
-      ...record,
-      rows: updatedRows,
-    });
+    onChangeRecord(
+      {
+        ...record,
+        rows: updatedRows,
+      },
+      immediate
+    );
+  };
+
+  const handleRowCommit = (
+    index: number,
+    field: keyof TillRowData,
+    numVal: number,
+  ) => {
+    handleRowNumericChange(index, field, numVal, true);
   };
 
   const handleOpenCalcForField = (
@@ -243,10 +292,18 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
   };
 
   const toggleLock = () => {
-    onChangeRecord({
-      ...record,
-      isSaved: !record.isSaved,
-    });
+    if (onToggleLock) {
+      onToggleLock(record);
+    } else {
+      onChangeRecord({
+        ...record,
+        isSaved: !record.isSaved,
+      });
+    }
+  };
+
+  const handleSave = () => {
+    onSaveRecord(record);
   };
 
   return (
@@ -287,6 +344,37 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Top Banner when Record is Locked */}
+        {isLocked && (
+          <div className="bg-amber-100/95 border-2 border-amber-500 text-amber-950 p-2.5 sm:p-3 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-xs mb-2 sm:mb-3 print:hidden">
+            <div className="flex items-center gap-2">
+              <div className="bg-amber-400 p-1.5 rounded-full border border-amber-600 text-black shrink-0">
+                <Lock className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="font-black text-xs sm:text-sm uppercase tracking-wide flex items-center gap-1.5">
+                  <span>This Sheet is Saved &amp; Locked</span>
+                  <span className="text-[10px] font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded font-bold border border-amber-400">
+                    AUDIT FINALIZED
+                  </span>
+                </div>
+                <div className="text-[11px] text-amber-900/90 font-medium">
+                  Figures are locked against accidental changes. Click unlock if you need to adjust figures.
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={toggleLock}
+              className="bg-black hover:bg-zinc-800 text-amber-400 font-black text-xs uppercase tracking-wider px-3.5 py-1.5 rounded border border-black active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0 shadow-sm"
+              title="Click to unlock this sheet and allow editing"
+            >
+              <Unlock className="w-3.5 h-3.5" />
+              Unlock Sheet to Edit
+            </button>
+          </div>
+        )}
 
         {/* Compact Single-Row Date, Operator & Actions Toolbar */}
         <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2 mb-2 sm:mb-3 bg-[#cbd7e6] p-1.5 sm:p-2 rounded-lg border border-slate-400">
@@ -334,6 +422,9 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                 className="bg-transparent font-bold text-slate-900 text-xs focus:outline-none cursor-pointer disabled:opacity-80 max-w-[130px] truncate"
               >
                 <option value="">-- Operator --</option>
+                {record.operator && !operators.includes(record.operator) && (
+                  <option value={record.operator}>{record.operator}</option>
+                )}
                 {operators.map((op) => (
                   <option key={op} value={op}>
                     {op}
@@ -356,6 +447,38 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                 <Users className="w-2.5 h-2.5 text-amber-400" />
                 Staff
               </button>
+            </div>
+
+            {/* Till Totals & Day Online Sales Quick Reference Tokens */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <div 
+                className="bg-white/95 border border-slate-400 px-2 py-0.5 rounded shadow-xs flex items-center gap-1"
+                title={`Day Till Total: ${formatCurrency(totals.totalCol3Expected)} (Sys Col 3 Expected Takings)`}
+              >
+                <span className="text-[9px] font-mono font-black uppercase text-slate-600">Till Total:</span>
+                <span className="font-mono font-black text-slate-900 text-xs sm:text-sm">{formatCurrency(totals.totalCol3Expected)}</span>
+              </div>
+              {onlineSalesRow && (
+                <div 
+                  className="bg-sky-100 border border-sky-400 text-sky-950 px-2 py-0.5 rounded shadow-xs flex items-center gap-1"
+                  title={`Day Online Sales: ${formatCurrency(onlineSalesRow.col2ExpectedCard || 0)} (Card only • Separate from till drawer)`}
+                >
+                  <Globe className="w-3 h-3 text-sky-700 shrink-0" />
+                  <span className="text-[9px] font-mono font-black uppercase text-sky-800">Day Online:</span>
+                  <span className="font-mono font-black text-xs sm:text-sm">{formatCurrency(onlineSalesRow.col2ExpectedCard || 0)}</span>
+                </div>
+              )}
+              {onlineSalesRow && (
+                <div 
+                  className="bg-sky-100 border border-sky-400 text-sky-950 px-2 py-0.5 rounded shadow-xs flex items-center gap-1 cursor-pointer hover:bg-sky-200 transition-colors"
+                  onClick={onOpenWeeklyReport}
+                  title={`Week Online Sales: ${formatCurrency(weekOnlineSalesTotal)} (Click to view Weekly Report)`}
+                >
+                  <Globe className="w-3 h-3 text-sky-700 shrink-0" />
+                  <span className="text-[9px] font-mono font-black uppercase text-sky-800">Week Online:</span>
+                  <span className="font-mono font-black text-xs sm:text-sm">{formatCurrency(weekOnlineSalesTotal)}</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -460,24 +583,212 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
               </button>
             </div>
 
-            {/* Status indicator (Locked/Editable) */}
-            <div className={`flex items-center gap-1 text-xs px-2 py-1 rounded font-bold border ${
-              isLocked 
-                ? "bg-amber-100/95 border-amber-400 text-amber-900" 
-                : "bg-white/90 border-slate-300 text-slate-700"
-            }`}>
+            {/* Status indicator (Locked/Editable) - Interactive toggle */}
+            <button
+              type="button"
+              onClick={toggleLock}
+              title={isLocked ? "Sheet is Locked. Click to Unlock for edits." : "Sheet is Editable. Click to Lock and prevent edits."}
+              className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded font-bold border transition-all cursor-pointer active:scale-95 ${
+                isLocked 
+                  ? "bg-amber-200 border-amber-500 text-amber-950 hover:bg-amber-300 shadow-xs" 
+                  : "bg-emerald-50 border-emerald-400 text-emerald-800 hover:bg-emerald-100 shadow-xs"
+              }`}
+            >
               {isLocked ? (
                 <>
-                  <Lock className="w-3 h-3 text-amber-700" />
-                  <span>Locked</span>
+                  <Lock className="w-3.5 h-3.5 text-amber-900" />
+                  <span>Locked (Click to Unlock)</span>
                 </>
               ) : (
                 <>
-                  <Unlock className="w-3 h-3 text-emerald-600" />
-                  <span>Editable</span>
+                  <Unlock className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Editable (Click to Lock)</span>
                 </>
               )}
+            </button>
+
+            {/* Quick Save Sheet Button in Header */}
+            <button
+              type="button"
+              onClick={handleSave}
+              title={isLocked ? "Sheet is Saved & Locked" : "Save & Lock current sheet to cloud & device"}
+              className={`flex items-center gap-1.5 text-xs px-3 py-1 rounded font-black border transition-all cursor-pointer active:scale-95 shadow-xs ${
+                isLocked
+                  ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-800"
+                  : "bg-red-600 hover:bg-red-700 text-white border-red-900"
+              }`}
+            >
+              {isLocked ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-200" />
+                  <span>✓ Saved</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Save Sheet</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* ========================================================= */}
+        {/* SEPARATE TOP SECTION: ONLINE SALES */}
+        {/* ========================================================= */}
+        {onlineSalesRow && onlineSalesIdx >= 0 && (
+          <div
+            data-online-sales="true"
+            data-row-type="online-sales"
+            className="online-sales-section mb-3.5 bg-slate-900 text-white rounded-lg p-3 sm:p-4 border-2 border-slate-700 shadow-md print:bg-white print:text-black print:border-black"
+          >
+            {/* Heading Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-3 border-b border-slate-700 print:border-black">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-sky-500/20 text-sky-400 rounded border border-sky-500/40 print:border-black print:text-black shrink-0">
+                  <Globe className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-base sm:text-lg font-black text-white print:text-black tracking-wide uppercase">
+                      Online Sales
+                    </h2>
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider bg-sky-500/20 text-sky-300 border border-sky-400/40 px-2 py-0.5 rounded print:text-black print:border-black">
+                      Card Settlement &amp; VAT
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-300 print:text-zinc-600 hidden sm:block">
+                    Non-physical sales revenue (credit card takings only • direct to bank • no float or cash drawer)
+                  </p>
+                </div>
+              </div>
+
+              {/* Status / Matching Badge */}
+              <div className="flex items-center gap-2 text-xs">
+                {Math.abs((onlineSalesRow.col2ExpectedCard || 0) - (onlineSalesRow.col6ActualCard || 0)) < 0.005 ? (
+                  <span className="inline-flex items-center gap-1 font-bold text-emerald-400 bg-emerald-950/60 px-2.5 py-1 rounded border border-emerald-600/50 print:text-black print:border-black">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Card Takings Match ({formatCurrency(onlineSalesRow.col2ExpectedCard || 0)})</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 font-bold text-amber-300 bg-amber-950/60 px-2.5 py-1 rounded border border-amber-600/50 print:text-black print:border-black">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>
+                      Diff: £{((onlineSalesRow.col6ActualCard || 0) - (onlineSalesRow.col2ExpectedCard || 0)).toFixed(2)}
+                    </span>
+                  </span>
+                )}
+              </div>
             </div>
+
+            {/* 5 Distinct Online Sales Field Boxes */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 sm:gap-3">
+              {/* 1. System Card Takings (Col 2) */}
+              <div className="bg-sky-950/70 print:bg-white p-2 sm:p-2.5 rounded border border-sky-500/60 print:border-black flex flex-col justify-between">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold text-[11px] sm:text-xs text-sky-300 print:text-black">
+                    Sys Card (2)
+                  </span>
+                  {!isLocked && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenCalcForField(onlineSalesIdx, "col2ExpectedCard")}
+                      className="bg-sky-400 text-slate-950 px-1.5 py-0.5 rounded hover:bg-sky-300 text-[10px] font-bold flex items-center gap-0.5 shadow-xs cursor-pointer active:scale-95 transition-all"
+                      title="Open Slips Adder / Calculator for Online Card Takings"
+                    >
+                      <Calculator className="w-2.5 h-2.5" />
+                      <span>Calc</span>
+                    </button>
+                  )}
+                </div>
+                <div className="bg-sky-50 border-2 border-sky-400 print:border-black rounded px-2 py-1 flex items-center shadow-inner">
+                  <span className="mr-1 text-sky-600 print:text-black font-bold text-xs sm:text-sm">£</span>
+                  <DecimalInput
+                    disabled={isLocked}
+                    value={onlineSalesRow.col2ExpectedCard}
+                    onChange={(val) => handleRowNumericChange(onlineSalesIdx, "col2ExpectedCard", val)}
+                    placeholder="0.00"
+                    className="w-full text-right font-black text-sky-950 print:text-black text-sm sm:text-base focus:outline-none disabled:bg-transparent"
+                  />
+                </div>
+              </div>
+
+              {/* 2. System Total (Col 3) */}
+              <div className="bg-sky-950/70 print:bg-white p-2 sm:p-2.5 rounded border border-sky-500/60 print:border-black flex flex-col justify-between">
+                <span className="font-bold text-[11px] sm:text-xs text-sky-300 print:text-black mb-1">
+                  Sys Total (3)
+                </span>
+                <div className="bg-sky-200 border-2 border-sky-400 print:border-black rounded px-2 py-1 text-right font-black text-sky-950 print:text-black text-sm sm:text-base truncate">
+                  {formatCurrency(onlineSalesRow.col2ExpectedCard || 0)}
+                </div>
+              </div>
+
+              {/* 3. Card PDQ Machine (Col 6) */}
+              <div className="bg-sky-950/70 print:bg-white p-2 sm:p-2.5 rounded border border-sky-500/60 print:border-black flex flex-col justify-between">
+                <span className="font-bold text-[11px] sm:text-xs text-sky-300 print:text-black mb-1">
+                  Card PDQ (6)
+                </span>
+                <div className="bg-sky-50 border-2 border-sky-400 print:border-black rounded px-2 py-1 flex items-center shadow-inner">
+                  <span className="mr-1 text-sky-600 print:text-black font-bold text-xs sm:text-sm">£</span>
+                  <DecimalInput
+                    disabled={isLocked}
+                    value={onlineSalesRow.col6ActualCard}
+                    onChange={(val) => handleRowNumericChange(onlineSalesIdx, "col6ActualCard", val)}
+                    placeholder="0.00"
+                    className="w-full text-right font-black text-sky-950 print:text-black text-sm sm:text-base focus:outline-none disabled:bg-transparent"
+                  />
+                </div>
+              </div>
+
+              {/* 4. Counted Total (Col 7) */}
+              <div className="bg-sky-950/70 print:bg-white p-2 sm:p-2.5 rounded border border-sky-500/60 print:border-black flex flex-col justify-between">
+                <span className="font-bold text-[11px] sm:text-xs text-sky-300 print:text-black mb-1">
+                  Count Total (7)
+                </span>
+                <div className="bg-sky-200 border-2 border-sky-400 print:border-black rounded px-2 py-1 text-right font-black text-sky-950 print:text-black text-sm sm:text-base truncate">
+                  {formatCurrency(onlineSalesRow.col6ActualCard || 0)}
+                </div>
+              </div>
+
+              {/* 5. VAT Entry Field (Col 8) */}
+              <div className="bg-sky-950/70 print:bg-white p-2 sm:p-2.5 rounded border border-sky-500/60 print:border-black flex flex-col justify-between col-span-2 sm:col-span-1">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold text-[11px] sm:text-xs text-sky-300 print:text-black">
+                    VAT Value (8)
+                  </span>
+                  <span className="text-[9px] font-black uppercase tracking-tight text-sky-900 bg-sky-200 px-1 py-0.5 rounded border border-sky-400">
+                    VAT
+                  </span>
+                </div>
+                <div className="bg-sky-50 border-2 border-sky-400 print:border-black rounded px-2 py-1 flex items-center shadow-inner">
+                  <span className="mr-1 text-sky-600 print:text-black font-bold text-xs sm:text-sm">£</span>
+                  <DecimalInput
+                    disabled={isLocked}
+                    value={onlineSalesRow.vat || 0}
+                    onChange={(val) => handleRowNumericChange(onlineSalesIdx, "vat", val)}
+                    placeholder="0.00"
+                    className="w-full text-right font-black text-sky-950 print:text-black text-sm sm:text-base focus:outline-none disabled:bg-transparent"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/* NORMAL SALES / TILL REGISTERS SECTION */}
+        {/* ========================================================= */}
+        <div className="flex items-center justify-between gap-2 mb-2 px-0.5">
+          <div className="flex items-center gap-2">
+            <div className="p-1 bg-slate-800 text-amber-300 rounded font-black border border-slate-700">
+              <Store className="w-3.5 h-3.5" />
+            </div>
+            <h2 className="text-sm sm:text-base font-black text-slate-900 tracking-wide uppercase">
+              Normal Sales (Till Registers)
+            </h2>
+            <span className="text-[10px] font-bold bg-[#cbd7e6] text-slate-800 px-2 py-0.5 rounded border border-slate-400">
+              Tills 1–3 &amp; Floats
+            </span>
           </div>
         </div>
 
@@ -485,9 +796,14 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
         {/* MOBILE CARDS VIEW (Visible when mobileViewMode === 'cards' on small screens) */}
         {/* ========================================================= */}
         <div
-          className={`${mobileViewMode === "cards" ? "block md:hidden" : "hidden"} space-y-4 mb-6`}
+          className={`mobile-cards-container ${mobileViewMode === "cards" ? "block md:hidden" : "hidden"} space-y-4 mb-6 print:hidden`}
         >
           {record.rows.map((row, idx) => {
+            if (row.isOnlineOrders) {
+              // Online Sales is rendered in the dedicated top section
+              return null;
+            }
+
             if (row.isYard) {
               const yardVar = row.customVariance || 0;
               return (
@@ -853,7 +1169,7 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
         {/* DESKTOP/TABLE VIEW GRID (Full width responsive layout) */}
         {/* ========================================================= */}
         <div
-          className={`${mobileViewMode === "table" ? "block" : "hidden md:block"} w-full overflow-x-auto pb-3`}
+          className={`tills-table-container ${mobileViewMode === "table" ? "block" : "hidden md:block"} w-full overflow-x-auto pb-3 print:block print:overflow-visible`}
         >
           <div className="w-fit min-w-full">
             {/* Column Reference Header Bar with Letter Identifiers [B] to [I] */}
@@ -941,8 +1257,13 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
             {/* Tills Table Area */}
             <div className="space-y-3 mb-6">
               {record.rows.map((row, idx) => {
+                if (row.isOnlineOrders) {
+                  // Online Sales is rendered in the dedicated top section
+                  return null;
+                }
+
                 if (row.isYard) {
-                  // YARD Special Row
+                  // Legacy YARD Special Row fallback
                   return (
                     <div
                       key={row.id || idx}
@@ -968,11 +1289,12 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                 return (
                   <div
                     key={row.id || idx}
-                    className="flex items-center gap-1.5 lg:gap-2 py-1"
+                    data-till-row="true"
+                    className="till-row flex items-center gap-1.5 lg:gap-2 py-1 print:flex"
                   >
                     {/* Till Title */}
                     <div className="w-20 shrink-0 flex items-center justify-between">
-                      <span className="text-white font-black text-xl sm:text-2xl drop-shadow-xs tracking-tight">
+                      <span className="text-white print:text-black font-black text-xl sm:text-2xl drop-shadow-xs tracking-tight">
                         {row.name}
                       </span>
                     </div>
@@ -1193,8 +1515,9 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
             {/* Column Totals Row */}
             <div className="pt-3 border-t-4 border-slate-900 mb-8">
               <div className="flex items-center gap-1.5 lg:gap-2">
-                <div className="w-20 shrink-0 bg-black text-amber-300 font-black text-[10px] sm:text-xs uppercase tracking-wider border-2 border-black rounded py-1.5 shadow-sm text-center flex items-center justify-center">
-                  DAY TOTALS
+                <div className="w-20 shrink-0 bg-black text-amber-300 font-black text-[9px] sm:text-[10px] uppercase tracking-wider border-2 border-black rounded py-1 shadow-sm text-center flex flex-col items-center justify-center leading-tight">
+                  <span>TILL TOTALS</span>
+                  <span className="text-[8px] text-slate-400 font-sans font-normal lowercase">(tills 1–5)</span>
                 </div>
 
                 {/* Left Totals */}
@@ -1264,6 +1587,39 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
                   </span>
                 </div>
               </div>
+
+              {/* Distinction Summary Footer: Tills vs Online Sales */}
+              <div className="mt-3 bg-slate-900/90 text-white rounded-lg p-2.5 border-2 border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="flex items-center gap-1.5">
+                    <span className="bg-amber-400 text-slate-950 font-black text-[10px] px-1.5 py-0.5 rounded">
+                      TILL TAKINGS
+                    </span>
+                    <span className="font-mono font-bold text-amber-200">
+                      Expected: {formatCurrency(totals.totalCol3Expected)} • Counted: {formatCurrency(totals.totalCol7Actual)}
+                    </span>
+                  </div>
+
+                  <span className="text-slate-600 hidden sm:inline">|</span>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="bg-sky-500/20 text-sky-300 border border-sky-400/40 font-bold text-[10px] px-1.5 py-0.5 rounded">
+                      ONLINE SALES (SEPARATE)
+                    </span>
+                    <span className="font-mono font-bold text-sky-200">
+                      Card: {formatCurrency(onlineSalesRow?.col2ExpectedCard || onlineSalesRow?.col6ActualCard || 0)}
+                      {((onlineSalesRow?.vat || 0) > 0) && ` (VAT: ${formatCurrency(onlineSalesRow?.vat || 0)})`}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 font-mono font-black text-slate-200 text-xs">
+                  <span className="text-[11px] text-slate-400 font-sans font-bold uppercase">Combined Business Total:</span>
+                  <span className="bg-slate-800 border border-slate-600 px-2 py-0.5 rounded text-amber-300">
+                    {formatCurrency((totals.totalCol3Expected || 0) + (onlineSalesRow?.col2ExpectedCard || onlineSalesRow?.col6ActualCard || 0))}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1316,24 +1672,41 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
 
             {/* Save Sheet Button */}
             <button
-              onClick={onSaveRecord}
-              className="col-span-2 sm:col-span-1 bg-gradient-to-b from-red-500 via-red-600 to-red-700 hover:from-red-600 hover:to-red-800 text-white font-black text-sm px-4 py-2.5 rounded-md border-2 border-red-900 shadow-md active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1"
+              onClick={handleSave}
+              className={`col-span-2 sm:col-span-1 font-black text-sm px-4 py-2.5 rounded-md border-2 shadow-md active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                isLocked
+                  ? "bg-gradient-to-b from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white border-emerald-900"
+                  : "bg-gradient-to-b from-red-500 via-red-600 to-red-700 hover:from-red-600 hover:to-red-800 text-white border-red-900"
+              }`}
+              title={isLocked ? "Sheet is finalized and locked" : "Save and lock current sheet"}
             >
-              Save Sheet
+              {isLocked ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-200" />
+                  <span>✓ Sheet Saved &amp; Locked</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4 text-amber-300" />
+                  <span>Save &amp; Lock Sheet</span>
+                </>
+              )}
             </button>
 
             {/* Undo Changes Button */}
             <button
               type="button"
               onClick={onUndo}
-              disabled={!canUndo}
+              disabled={!canUndo || isLocked}
               className={`col-span-2 sm:col-span-1 font-black text-xs sm:text-sm px-3.5 py-2.5 rounded-md border-2 shadow-md active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                canUndo
+                canUndo && !isLocked
                   ? "bg-amber-100 hover:bg-amber-200 text-amber-950 border-amber-500"
                   : "bg-slate-100 text-slate-400 border-slate-300 opacity-60 cursor-not-allowed"
               }`}
               title={
-                canUndo
+                isLocked
+                  ? "Unlock sheet to undo changes"
+                  : canUndo
                   ? "Undo recent changes on this sheet (Ctrl+Z)"
                   : "No changes to undo"
               }
@@ -1348,7 +1721,7 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
               onClick={toggleLock}
               className={`col-span-2 sm:col-span-1 font-black text-xs sm:text-sm px-3.5 py-2.5 rounded-md border-2 shadow-md active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                 isLocked
-                  ? "bg-amber-400 hover:bg-amber-300 text-black border-slate-900"
+                  ? "bg-amber-300 hover:bg-amber-400 text-black border-slate-900 font-black shadow"
                   : "bg-white hover:bg-emerald-50 text-slate-900 border-slate-400"
               }`}
               title={
@@ -1359,13 +1732,13 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
             >
               {isLocked ? (
                 <>
-                  <Lock className="w-4 h-4 text-black shrink-0" />
-                  <span>Locked (Unlock)</span>
+                  <Unlock className="w-4 h-4 text-black shrink-0" />
+                  <span>Unlock Sheet to Edit</span>
                 </>
               ) : (
                 <>
-                  <Unlock className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Unlocked (Lock)</span>
+                  <Lock className="w-4 h-4 text-slate-700 shrink-0" />
+                  <span>Lock Sheet</span>
                 </>
               )}
             </button>
