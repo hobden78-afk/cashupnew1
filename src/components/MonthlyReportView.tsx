@@ -1220,7 +1220,7 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
             </span>
             <Receipt className="w-4 h-4 text-amber-600" />
           </div>
-          <div className="text-xl sm:text-2xl font-black font-mono text-black mt-1">
+          <div className="text-xl sm:text-2xl font-black font-mono text-black mt-1 tabular-nums whitespace-nowrap overflow-visible">
             {formatCurrency(rangeTotals.expTotal)}
           </div>
           <div className="text-[10px] font-mono text-zinc-600 mt-1 flex justify-between">
@@ -1237,7 +1237,7 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
             </span>
             <Building2 className="w-4 h-4 text-emerald-700" />
           </div>
-          <div className="text-xl sm:text-2xl font-black font-mono text-black mt-1">
+          <div className="text-xl sm:text-2xl font-black font-mono text-black mt-1 tabular-nums whitespace-nowrap overflow-visible">
             {formatCurrency(rangeTotals.bankingCash)}
           </div>
           <div className="text-[10px] font-mono text-zinc-600 mt-1">
@@ -1253,7 +1253,7 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
             </span>
             <CreditCard className="w-4 h-4 text-blue-600" />
           </div>
-          <div className="text-xl sm:text-2xl font-black font-mono text-black mt-1">
+          <div className="text-xl sm:text-2xl font-black font-mono text-black mt-1 tabular-nums whitespace-nowrap overflow-visible">
             {formatCurrency(rangeTotals.actualCard)}
           </div>
           <div className="text-[10px] font-mono text-zinc-600 mt-1">
@@ -1269,7 +1269,7 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
             </span>
             <Coins className="w-4 h-4 text-purple-600" />
           </div>
-          <div className="text-xl sm:text-2xl font-black font-mono text-black mt-1">
+          <div className="text-xl sm:text-2xl font-black font-mono text-black mt-1 tabular-nums whitespace-nowrap overflow-visible">
             {formatCurrency(rangeTotals.actualTotal)}
           </div>
           <div className="text-[10px] font-mono text-zinc-600 mt-1">
@@ -1302,7 +1302,7 @@ export const MonthlyReportView: React.FC<MonthlyReportViewProps> = ({
             />
           </div>
           <div
-            className={`text-xl sm:text-2xl font-black font-mono mt-1 ${
+            className={`text-xl sm:text-2xl font-black font-mono mt-1 tabular-nums whitespace-nowrap overflow-visible ${
               rangeTotals.varianceTotal < -0.009
                 ? 'text-rose-700'
                 : rangeTotals.varianceTotal > 0.009

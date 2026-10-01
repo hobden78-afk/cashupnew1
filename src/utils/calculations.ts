@@ -207,23 +207,10 @@ export function exportRecordToCSV(record: SheetRecord, allRecords: SheetRecord[]
     headers.join(','),
   ].filter(line => line !== undefined);
 
+  const onlineRow = record.rows.find((r) => r.isOnlineOrders);
+
   for (const row of record.rows) {
-    if (row.isYard) {
-      lines.push(`"${row.name}",,,,,,,,"${row.customVariance || 0}"`);
-      continue;
-    }
-    if (row.isOnlineOrders) {
-      lines.push([
-        `"${row.name}"`,
-        '0.00',
-        row.col2ExpectedCard.toFixed(2),
-        row.col2ExpectedCard.toFixed(2),
-        '0.00',
-        '0.00',
-        row.col6ActualCard.toFixed(2),
-        row.col6ActualCard.toFixed(2),
-        `"VAT: £${(row.vat || 0).toFixed(2)}"`,
-      ].join(','));
+    if (row.isYard || row.isOnlineOrders) {
       continue;
     }
     const expTotal = getRowExpectedTotal(row);
@@ -244,7 +231,7 @@ export function exportRecordToCSV(record: SheetRecord, allRecords: SheetRecord[]
   }
 
   lines.push([
-    '"TOTALS"',
+    '"TILL TOTALS (TILLS 1-5 ONLY)"',
     totals.totalCol1Cash.toFixed(2),
     totals.totalCol2Card.toFixed(2),
     totals.totalCol3Expected.toFixed(2),
@@ -254,6 +241,18 @@ export function exportRecordToCSV(record: SheetRecord, allRecords: SheetRecord[]
     totals.totalCol7Actual.toFixed(2),
     totals.totalVariance.toFixed(2),
   ].join(','));
+
+  if (onlineRow) {
+    lines.push('');
+    lines.push('"--- ONLINE SALES (CARD SETTLEMENT & VAT - EXCLUDED FROM TILL TAKINGS) ---"');
+    lines.push('"Sales Channel","Sys Card (Col 2)","Card PDQ (Col 6)","VAT Value (Col 8)"');
+    lines.push([
+      '"Online Sales"',
+      (onlineRow.col2ExpectedCard || 0).toFixed(2),
+      (onlineRow.col6ActualCard || 0).toFixed(2),
+      `"£${(onlineRow.vat || 0).toFixed(2)}"`,
+    ].join(','));
+  }
 
   if (record.notes) {
     lines.push('');

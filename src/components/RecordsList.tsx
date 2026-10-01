@@ -775,7 +775,7 @@ export const RecordsList: React.FC<RecordsListProps> = ({
                 <th className="py-3 px-4 font-normal">Date</th>
                 <th className="py-3 px-4 font-normal">Operator</th>
                 <th className="py-3 px-4 font-normal">Status</th>
-                <th className="py-3 px-4 text-right font-normal">Exp Takings</th>
+                <th className="py-3 px-4 text-right font-normal">Exp Takings (Tills)</th>
                 <th className="py-3 px-4 text-right font-normal">Actual Counted</th>
                 <th className="py-3 px-4 text-right font-normal">Cash Banked</th>
                 <th className="py-3 px-4 text-right font-normal">Variance</th>
@@ -860,11 +860,6 @@ export const RecordsList: React.FC<RecordsListProps> = ({
 
                       <td className="py-3.5 px-4 text-right font-mono">
                         <div className="font-bold">{formatCurrency(totals.totalCol3Expected)}</div>
-                        {(totals.onlineSalesExpected || 0) > 0 && (
-                          <div className="text-[10px] text-sky-700 font-sans font-bold flex items-center justify-end gap-1 mt-0.5" title="Separate Online Sales">
-                            <span className="bg-sky-50 border border-sky-200 px-1 rounded">🌐 {formatCurrency(totals.onlineSalesExpected || 0)} online</span>
-                          </div>
-                        )}
                       </td>
 
                       <td className="py-3.5 px-4 text-right font-mono font-bold">

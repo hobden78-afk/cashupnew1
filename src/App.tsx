@@ -36,6 +36,7 @@ import {
   recalculateAllRecords,
   sortRecordsByDate,
   filterRecordsByFinancialYear,
+  getFinancialYear,
 } from './utils/calculations';
 import {
   diffSheetRecords,
@@ -60,6 +61,7 @@ import { GoogleCalendarModal } from './components/GoogleCalendarModal';
 import { DateRangeReportModal } from './components/DateRangeReportModal';
 import { BulkExportModal } from './components/BulkExportModal';
 import { OperatorModal } from './components/OperatorModal';
+import { NewRecordModal } from './components/NewRecordModal';
 import { FinancialYearFormat, FinancialYearSwitcher } from './components/FinancialYearSwitcher';
 import { LockScreen } from './components/LockScreen';
 import { SecuritySettingsModal } from './components/SecuritySettingsModal';
@@ -231,6 +233,7 @@ export default function App() {
     return true; // Main header disappears by default when entering or editing daily record
   });
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isNewRecordModalOpen, setIsNewRecordModalOpen] = useState<boolean>(false);
 
   useEffect(() => {
     try {
@@ -480,12 +483,17 @@ export default function App() {
               return sortedCloud;
             });
 
-            // On initial startup / cloud load, ensure the active record is the last record entered
+            // On initial startup / cloud load, ensure the active record is set, preserving any record already selected
             if (isInitialCloudLoadRef.current) {
               isInitialCloudLoadRef.current = false;
               const startupId = getStartupRecordId(cloudRecords);
               if (startupId) {
-                setActiveRecordId(startupId);
+                setActiveRecordId((currentId) => {
+                  if (currentId && cloudRecords.some((r) => r.id === currentId)) {
+                    return currentId;
+                  }
+                  return startupId;
+                });
               }
             }
           } else {
@@ -1146,44 +1154,11 @@ export default function App() {
     }
   };
 
-  // Add a new daily record
-  const handleAddNewRecord = () => {
-    // Determine next date or today
-    const todayISO = new Date().toISOString().slice(0, 10);
-    let newDate = todayISO;
-
-    if (selectedFinancialYear !== 'all' && /^\d{4}$/.test(selectedFinancialYear)) {
-      // If a specific year (e.g. 2025) is selected, place new record within that year
-      const yearRecords = records.filter((r) => r.date.startsWith(selectedFinancialYear));
-      if (yearRecords.length > 0) {
-        const latestDate = new Date(
-          Math.max(...yearRecords.map((r) => new Date(r.date).getTime()))
-        );
-        latestDate.setDate(latestDate.getDate() + 1);
-        const potential = latestDate.toISOString().slice(0, 10);
-        if (potential.startsWith(selectedFinancialYear)) {
-          newDate = potential;
-        } else {
-          newDate = `${selectedFinancialYear}-01-01`;
-        }
-      } else {
-        newDate = `${selectedFinancialYear}-01-01`;
-      }
-    } else {
-      // Check if a record already exists for today, if so increment date
-      const existingDates = new Set(records.map((r) => r.date));
-      if (existingDates.has(newDate)) {
-        const latestDate = new Date(
-          Math.max(...records.map((r) => new Date(r.date).getTime()))
-        );
-        latestDate.setDate(latestDate.getDate() + 1);
-        newDate = latestDate.toISOString().slice(0, 10);
-      }
-    }
-
+  // Confirmed creation of a new daily record for a specific date & operator
+  const handleCreateRecordConfirmed = (targetDate: string, operatorName?: string) => {
     // Find previous day's record to carry over float (5) into Sys cash (1)
     const sortedExisting = sortRecordsByDate(records);
-    const prevRecord = sortedExisting.find((r) => r.date < newDate) || sortedExisting[0];
+    const prevRecord = sortedExisting.find((r) => r.date < targetDate) || sortedExisting[0];
 
     const initialRows = createBlankRows();
     if (prevRecord && prevRecord.rows) {
@@ -1205,21 +1180,37 @@ export default function App() {
     flushPendingSaves();
 
     const newRec: SheetRecord = {
-      id: `rec-${newDate}-${Date.now()}`,
-      date: newDate,
-      operator: operators[0] || '',
+      id: `rec-${targetDate}-${Date.now()}`,
+      date: targetDate,
+      operator: operatorName !== undefined ? operatorName : (operators[0] || ''),
       isSaved: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       rows: initialRows,
     };
 
-    setRecords((prev) => sortRecordsByDate([newRec, ...prev]));
-    latestActiveRecordRef.current = newRec;
-    saveRecordToCloudImmediately(newRec);
+    const updatedList = sortRecordsByDate([newRec, ...records]);
+    setRecords(updatedList);
     try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
       localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, newRec.id);
     } catch (e) {}
+
+    latestActiveRecordRef.current = newRec;
+    isInitialCloudLoadRef.current = false;
+
+    // Reset financial year filter if it would hide this record
+    if (selectedFinancialYear !== 'all') {
+      const fy = getFinancialYear(newRec.date, financialYearFormat);
+      if (fy !== selectedFinancialYear && !newRec.date.startsWith(selectedFinancialYear)) {
+        setSelectedFinancialYear('all');
+        try {
+          localStorage.setItem('delta_till_selected_fy_v1', 'all');
+        } catch (e) {}
+      }
+    }
+
+    saveRecordToCloudImmediately(newRec);
     addAuditLog(
       createRecordAuditEntry(
         newRec,
@@ -1229,7 +1220,12 @@ export default function App() {
     );
     setActiveRecordId(newRec.id);
     setActiveTab('sheet');
-    showToast(`New sheet created for ${formatToUKDate(newDate)} (Float carried over from previous day).`);
+    showToast(`✅ New sheet created for ${formatToUKDate(targetDate)} (Float carried over from previous day).`);
+  };
+
+  // Add a new daily record trigger (opens New Daily Sheet modal)
+  const handleAddNewRecord = () => {
+    setIsNewRecordModalOpen(true);
   };
 
   // Force sync all current records to cloud database
@@ -1380,38 +1376,7 @@ export default function App() {
       setActiveTab('sheet');
       showToast(`Jumped to day sheet for ${formatToUKDate(targetDate)}.`);
     } else {
-      // Find previous day's record to carry over float into Sys cash
-      const sortedExisting = sortRecordsByDate(records);
-      const prevRecord = sortedExisting.find((r) => r.date < targetDate) || sortedExisting[0];
-
-      const initialRows = createBlankRows();
-      if (prevRecord && prevRecord.rows) {
-        initialRows.forEach((row) => {
-          if (row.isYard || row.isOnlineOrders) return;
-          const prevRow = prevRecord.rows.find(
-            (pr) => pr.id === row.id || pr.name === row.name || (pr.name && row.name && pr.name.toLowerCase() === row.name.toLowerCase())
-          );
-          const floatVal = prevRow && typeof prevRow.col5FloatCash === 'number' ? prevRow.col5FloatCash : 0;
-          row.col1ExpectedCash = floatVal;
-          row.prevFloat = floatVal;
-        });
-      }
-
-      const newRec: SheetRecord = {
-        id: `rec-${targetDate}-${Date.now()}`,
-        date: targetDate,
-        operator: operators[0] || '',
-        isSaved: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        rows: initialRows,
-      };
-
-      setRecords((prev) => sortRecordsByDate([newRec, ...prev]));
-      saveRecordToCloudImmediately(newRec);
-      setActiveRecordId(newRec.id);
-      setActiveTab('sheet');
-      showToast(`Created & opened new sheet for ${formatToUKDate(targetDate)}.`);
+      handleCreateRecordConfirmed(targetDate, operators[0] || '');
     }
   };
 
@@ -1771,19 +1736,19 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Day Total Field Copy (Col 3 Sys Total from current active day sheet) */}
+              {/* Day Till Total (Tills 1-5 expected takings matching bottom till total figure, excludes online card sales) */}
               {currentRecord && currentRecordTotals && (
                 <div
-                  id="top-dashboard-day-total"
+                  id="top-dashboard-day-till-total"
                   className="flex items-center gap-2.5 bg-zinc-50 border-2 border-black p-2 sm:p-2.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] shrink-0"
-                  title={`Live Day Total for ${formatToUKDate(currentRecord.date)} (Sys Total Col 3)`}
+                  title={`Live Day Till Total for ${formatToUKDate(currentRecord.date)} (Tills 1–5 Expected Takings, excludes online card sales)`}
                 >
                   <div className="flex flex-col">
                     <div className="text-[10px] font-mono font-black uppercase text-zinc-700 flex items-center gap-1.5 tracking-tight">
                       <span className="bg-amber-400 text-slate-950 font-mono font-black text-[9px] px-1 border border-black rounded-xs">
-                        D
+                        T
                       </span>
-                      <span>Day Total (Sys 3)</span>
+                      <span>Day Till Total (1–5)</span>
                       <span className="text-zinc-500 font-normal">
                         ({formatToUKDate(currentRecord.date)})
                       </span>
@@ -1813,6 +1778,30 @@ export default function App() {
                     <div className="bg-sky-100 border-2 border-slate-900 rounded px-3 py-1 mt-1 text-right font-black text-sky-950 text-base sm:text-xl font-mono shadow-xs flex items-center justify-between gap-2">
                       <span className="text-[9px] font-mono font-bold text-sky-700 uppercase tracking-tight">Card</span>
                       <span>{formatCurrency(currentRecordOnlineSales)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Overall Combined Day Total (Tills 1-5 + Online Card Sales) */}
+              {currentRecord && currentRecordTotals && (
+                <div
+                  id="top-dashboard-combined-total"
+                  className="flex items-center gap-2.5 bg-emerald-50 border-2 border-black p-2 sm:p-2.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] shrink-0"
+                  title={`Combined Business Total for ${formatToUKDate(currentRecord.date)} (Tills 1-5 Takings + Online Card Sales)`}
+                >
+                  <div className="flex flex-col">
+                    <div className="text-[10px] font-mono font-black uppercase text-emerald-950 flex items-center gap-1.5 tracking-tight">
+                      <span className="bg-emerald-500 text-white font-mono font-black text-[9px] px-1 border border-black rounded-xs">
+                        ALL
+                      </span>
+                      <span>Overall Day Total</span>
+                      <span className="text-zinc-500 font-normal">
+                        (Tills + Online)
+                      </span>
+                    </div>
+                    <div className="bg-emerald-100 border-2 border-emerald-900 rounded px-3 py-1 mt-1 text-right font-black text-emerald-950 text-base sm:text-xl font-mono shadow-xs">
+                      {formatCurrency((currentRecordTotals.totalCol3Expected || 0) + (currentRecordOnlineSales || 0))}
                     </div>
                   </div>
                 </div>
@@ -2160,6 +2149,20 @@ export default function App() {
           allRecords={records}
         />
       )}
+
+      {/* Create New Record Modal */}
+      <NewRecordModal
+        isOpen={isNewRecordModalOpen}
+        onClose={() => setIsNewRecordModalOpen(false)}
+        onCreateRecord={(date, operator) => handleCreateRecordConfirmed(date, operator)}
+        onOpenExistingRecord={(recordId) => {
+          setActiveRecordId(recordId);
+          setActiveTab('sheet');
+        }}
+        existingRecords={records}
+        operators={operators}
+        financialYearFormat={financialYearFormat}
+      />
 
       {/* Date Range Day Page Report Modal */}
       <DateRangeReportModal

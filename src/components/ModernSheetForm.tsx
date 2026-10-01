@@ -435,9 +435,9 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
           <div className="flex items-center gap-1.5 shrink-0">
             <div
               className="flex items-center gap-1 bg-white border-2 border-black px-2 py-1 shadow-xs"
-              title={`Day Till Total: ${formatCurrency(totals.totalCol3Expected)} (Sys Col 3 Expected Takings)`}
+              title={`Day Till Total: ${formatCurrency(totals.totalCol3Expected)} (Sys Col 3 Expected Takings, Tills 1-5 only)`}
             >
-              <span className="text-[9px] font-mono font-black uppercase text-zinc-600">Till Total:</span>
+              <span className="text-[9px] font-mono font-black uppercase text-zinc-600">Till Total (1-5):</span>
               <span className="font-mono font-bold text-xs text-black">{formatCurrency(totals.totalCol3Expected)}</span>
             </div>
             {onlineSalesRow && (
@@ -448,6 +448,15 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
                 <Globe className="w-3.5 h-3.5 text-sky-700 shrink-0" />
                 <span className="text-[9px] font-mono font-black uppercase text-sky-900">Day Online:</span>
                 <span className="font-mono font-black text-xs text-sky-950">{formatCurrency(onlineSalesRow.col2ExpectedCard || 0)}</span>
+              </div>
+            )}
+            {onlineSalesRow && (
+              <div
+                className="flex items-center gap-1 bg-emerald-100 border-2 border-emerald-600 px-2 py-1 shadow-xs text-emerald-950"
+                title={`Combined Business Day Total: ${formatCurrency((totals.totalCol3Expected || 0) + (onlineSalesRow.col2ExpectedCard || 0))} (Tills 1-5 + Online Card Sales)`}
+              >
+                <span className="text-[9px] font-mono font-black uppercase text-emerald-900">Combined Day:</span>
+                <span className="font-mono font-black text-xs text-emerald-950">{formatCurrency((totals.totalCol3Expected || 0) + (onlineSalesRow.col2ExpectedCard || 0))}</span>
               </div>
             )}
             {onlineSalesRow && (
