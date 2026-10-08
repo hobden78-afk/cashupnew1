@@ -60,6 +60,17 @@ export function diffSheetRecords(
     });
   }
 
+  // 4b. Check attached PDF document
+  const prevPdfName = prev.attachedPdf?.name;
+  const nextPdfName = next.attachedPdf?.name;
+  if (prevPdfName !== nextPdfName) {
+    changes.push({
+      field: 'Attached PDF Document',
+      oldValue: prevPdfName || 'None',
+      newValue: nextPdfName || 'Removed',
+    });
+  }
+
   // 5. Check row numbers
   const prevRowsMap = new Map((prev.rows || []).map((r) => [r.id, r]));
   (next.rows || []).forEach((nextRow) => {

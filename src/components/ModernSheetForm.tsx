@@ -50,6 +50,7 @@ import { DaySheetPrintModal } from "./DaySheetPrintModal";
 import { ThermalReceiptModal } from "./ThermalReceiptModal";
 import { GoToDateModal } from "./GoToDateModal";
 import { FinancialYearFormat } from "./FinancialYearSwitcher";
+import { PdfAttachmentHolder } from "./PdfAttachmentHolder";
 
 interface ModernSheetFormProps {
   record: SheetRecord;
@@ -1694,29 +1695,41 @@ export const ModernSheetForm: React.FC<ModernSheetFormProps> = ({
         </div>
       </div>
 
-      {/* Manager Notes & Audit Verification Section */}
-      <div className="bg-white p-5 border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] flex flex-col md:flex-row gap-4 items-start justify-between">
-        <div className="flex-1 w-full">
-          <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600 mb-2">
-            Audit Notes & Manager Remarks
-          </label>
-          <textarea
-            disabled={isLocked}
-            value={record.notes || ""}
-            onChange={(e) =>
-              onChangeRecord({ ...record, notes: e.target.value })
-            }
-            placeholder="Enter shift notes, explanations for variances, staff on duty..."
-            className="w-full h-20 p-3 bg-zinc-50 border-2 border-black text-sm font-mono focus:outline-none focus:bg-white text-black"
-          />
+      {/* Manager Notes & Audit Verification Section with PDF File Holder */}
+      <div className="bg-white p-5 border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] flex flex-col gap-4">
+        <div className="flex flex-col md:flex-row gap-4 items-start justify-between">
+          <div className="flex-1 w-full">
+            <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600 mb-2">
+              Audit Notes & Manager Remarks
+            </label>
+            <textarea
+              disabled={isLocked}
+              value={record.notes || ""}
+              onChange={(e) =>
+                onChangeRecord({ ...record, notes: e.target.value })
+              }
+              placeholder="Enter shift notes, explanations for variances, staff on duty..."
+              className="w-full h-20 p-3 bg-zinc-50 border-2 border-black text-sm font-mono focus:outline-none focus:bg-white text-black"
+            />
+          </div>
+          <div className="shrink-0 flex flex-col items-center justify-center p-2 bg-zinc-50 border border-black">
+            <RecordAuditQrCode
+              record={record}
+              totals={totals}
+              size={72}
+              showCaption={true}
+              className="border-none shadow-none bg-transparent"
+            />
+          </div>
         </div>
-        <div className="shrink-0 flex flex-col items-center justify-center p-2 bg-zinc-50 border border-black">
-          <RecordAuditQrCode
+
+        {/* Attached PDF File Holder */}
+        <div className="pt-3 border-t-2 border-zinc-200">
+          <PdfAttachmentHolder
             record={record}
-            totals={totals}
-            size={72}
-            showCaption={true}
-            className="border-none shadow-none bg-transparent"
+            isLocked={isLocked}
+            onChangeRecord={onChangeRecord}
+            variant="modern"
           />
         </div>
       </div>

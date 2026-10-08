@@ -846,16 +846,26 @@ export const RecordsList: React.FC<RecordsListProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4">
-                        <span
-                          className={`inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider px-2.5 py-0.5 border ${
-                            rec.isSaved
-                              ? 'bg-amber-100 border-amber-600 text-amber-900'
-                              : 'bg-zinc-100 border-zinc-400 text-black'
-                          }`}
-                        >
-                          {rec.isSaved ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
-                          {rec.isSaved ? 'Saved' : 'Draft'}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span
+                            className={`inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider px-2.5 py-0.5 border ${
+                              rec.isSaved
+                                ? 'bg-amber-100 border-amber-600 text-amber-900'
+                                : 'bg-zinc-100 border-zinc-400 text-black'
+                            }`}
+                          >
+                            {rec.isSaved ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                            {rec.isSaved ? 'Saved' : 'Draft'}
+                          </span>
+                          {rec.attachedPdf && (
+                            <span 
+                              className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-red-700 bg-red-50 border border-red-300 px-1.5 py-0.5 rounded shadow-2xs"
+                              title={`Attached PDF: ${rec.attachedPdf.name}`}
+                            >
+                              📎 PDF
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       <td className="py-3.5 px-4 text-right font-mono">

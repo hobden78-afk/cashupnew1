@@ -43,6 +43,7 @@ import { DaySheetPrintModal } from "./DaySheetPrintModal";
 import { ThermalReceiptModal } from "./ThermalReceiptModal";
 import { DecimalInput } from "./DecimalInput";
 import { GoToDateModal } from "./GoToDateModal";
+import { PdfAttachmentHolder } from "./PdfAttachmentHolder";
 import {
   FinancialYearSwitcher,
   FinancialYearFormat,
@@ -1633,29 +1634,41 @@ export const DeltaSheetForm: React.FC<DeltaSheetFormProps> = ({
           </div>
         </div>
 
-        {/* End-of-Day Notes & Shift Handover */}
-        <div className="mt-4 bg-[#e6e6e6] border-2 border-slate-400 p-3.5 rounded-md shadow-inner flex flex-col md:flex-row items-start justify-between gap-4">
-          <div className="flex-1 w-full">
-            <label className="block text-xs font-black uppercase tracking-wider text-slate-900 mb-1.5 flex items-center gap-1.5">
-              End-of-Day Notes & Shift Handover Comments:
-            </label>
-            <textarea
-              disabled={isLocked}
-              value={record.notes || ""}
-              onChange={(e) =>
-                onChangeRecord({ ...record, notes: e.target.value })
-              }
-              placeholder="Enter shift notes, handover comments, staff on duty, or explanations for variances..."
-              className="w-full h-20 p-2.5 bg-white border-2 border-slate-400 rounded text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-400 text-slate-900 disabled:bg-slate-200 disabled:text-slate-600"
-            />
+        {/* End-of-Day Notes & Shift Handover with PDF File Holder */}
+        <div className="mt-4 bg-[#e6e6e6] border-2 border-slate-400 p-3.5 rounded-md shadow-inner flex flex-col gap-3.5">
+          <div className="flex flex-col md:flex-row items-start justify-between gap-4">
+            <div className="flex-1 w-full">
+              <label className="block text-xs font-black uppercase tracking-wider text-slate-900 mb-1.5 flex items-center gap-1.5">
+                End-of-Day Notes & Shift Handover Comments:
+              </label>
+              <textarea
+                disabled={isLocked}
+                value={record.notes || ""}
+                onChange={(e) =>
+                  onChangeRecord({ ...record, notes: e.target.value })
+                }
+                placeholder="Enter shift notes, handover comments, staff on duty, or explanations for variances..."
+                className="w-full h-20 p-2.5 bg-white border-2 border-slate-400 rounded text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-400 text-slate-900 disabled:bg-slate-200 disabled:text-slate-600"
+              />
+            </div>
+            <div className="shrink-0 flex flex-col items-center justify-center p-2 bg-white border-2 border-slate-400 rounded">
+              <RecordAuditQrCode
+                record={record}
+                totals={totals}
+                size={68}
+                showCaption={true}
+                className="border-none shadow-none bg-transparent"
+              />
+            </div>
           </div>
-          <div className="shrink-0 flex flex-col items-center justify-center p-2 bg-white border-2 border-slate-400 rounded">
-            <RecordAuditQrCode
+
+          {/* PDF File Holder */}
+          <div className="pt-2.5 border-t border-slate-300">
+            <PdfAttachmentHolder
               record={record}
-              totals={totals}
-              size={68}
-              showCaption={true}
-              className="border-none shadow-none bg-transparent"
+              isLocked={isLocked}
+              onChangeRecord={onChangeRecord}
+              variant="delta"
             />
           </div>
         </div>

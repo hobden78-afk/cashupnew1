@@ -96,60 +96,57 @@ const STORAGE_KEY = 'delta_till_cashing_up_records_v1';
 const OPERATORS_STORAGE_KEY = 'delta_till_operators_v1';
 const DELETED_IDS_STORAGE_KEY = 'delta_till_deleted_records_v1';
 const AUDIT_LOGS_STORAGE_KEY = 'delta_till_audit_logs_v1';
-const LAST_ENTERED_RECORD_ID_KEY = 'delta_till_last_entered_record_id_v1';
 
 /**
- * Find the most recently active or entered record in the dataset.
- * Prioritizes:
- * 1. The record with the newest updatedAt timestamp (most recently modified/saved across devices).
- * 2. The record with the newest createdAt timestamp.
- * 3. Calendar date descending (newest date first).
+ * Find the default record to display when the app is opened:
+ * Defaults to the last saved record (isSaved === true).
+ * If a newer overall record exists (e.g. today's active/draft sheet), or if no saved records exist,
+ * defaults to the latest record overall.
  */
-function getLatestEnteredRecord(recordList: SheetRecord[]): SheetRecord | undefined {
+export function getLastSavedOrLatestRecord(recordList: SheetRecord[]): SheetRecord | undefined {
   if (!recordList || recordList.length === 0) return undefined;
 
-  return [...recordList].sort((a, b) => {
-    // 1. Most recently updated/saved (highest updatedAt timestamp)
-    const aUpdated = a?.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-    const bUpdated = b?.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-    if (aUpdated && bUpdated && Math.abs(bUpdated - aUpdated) > 1000) {
-      return bUpdated - aUpdated;
-    }
-
-    // 2. Most recently created
-    const aCreated = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
-    const bCreated = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
-    if (aCreated && bCreated && Math.abs(bCreated - aCreated) > 1000) {
+  const sortRecordsDesc = (list: SheetRecord[]) => {
+    return [...list].sort((a, b) => {
+      const dateDiff = (b.date || '').localeCompare(a.date || '');
+      if (dateDiff !== 0) return dateDiff;
+      const bUpdated = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      const aUpdated = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+      if (bUpdated !== aUpdated) return bUpdated - aUpdated;
+      const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       return bCreated - aCreated;
-    }
+    });
+  };
 
-    // 3. Fallback: Compare calendar date descending (newest date first)
-    const aDate = a?.date || '';
-    const bDate = b?.date || '';
-    return bDate.localeCompare(aDate);
-  })[0];
+  const savedRecords = recordList.filter((r) => r.isSaved);
+  const sortedAll = sortRecordsDesc(recordList);
+  const newestOverall = sortedAll[0];
+
+  if (savedRecords.length > 0) {
+    const sortedSaved = sortRecordsDesc(savedRecords);
+    const newestSaved = sortedSaved[0];
+
+    // If an overall record has a strictly later calendar date than the last saved record
+    // (e.g. a newly opened/in-progress sheet created for today/tomorrow), default to that latest record.
+    if (newestOverall && newestOverall.date && newestSaved && newestSaved.date) {
+      if (newestOverall.date > newestSaved.date) {
+        return newestOverall;
+      }
+    }
+    return newestSaved;
+  }
+
+  return newestOverall;
 }
 
 /**
- * Determine the record ID to display on startup.
- * Checks the last record accessed/entered in localStorage.
- * If opening on a new computer or no local preference, displays the latest entered/modified record.
+ * Determine the record ID to display on startup:
+ * Defaults strictly to the last saved record or last record in the dataset.
  */
-function getStartupRecordId(recordList: SheetRecord[]): string | undefined {
-  if (!recordList || recordList.length === 0) return undefined;
-
-  try {
-    const savedId = localStorage.getItem(LAST_ENTERED_RECORD_ID_KEY);
-    if (savedId) {
-      const savedRecord = recordList.find((r) => r.id === savedId);
-      if (savedRecord) {
-        return savedRecord.id;
-      }
-    }
-  } catch (e) {}
-
-  const latestEntered = getLatestEnteredRecord(recordList);
-  return latestEntered?.id || recordList[0]?.id;
+export function getStartupRecordId(recordList: SheetRecord[]): string | undefined {
+  const target = getLastSavedOrLatestRecord(recordList);
+  return target?.id || recordList[0]?.id;
 }
 
 export default function App() {
@@ -195,7 +192,7 @@ export default function App() {
   });
 
   const [activeRecordId, setActiveRecordId] = useState<string>(() => {
-    return getStartupRecordId(records) || records[0]?.id || 'rec-2026-08-01';
+    return getStartupRecordId(records) || records[0]?.id || '';
   });
 
   const isInitialCloudLoadRef = React.useRef<boolean>(true);
@@ -238,6 +235,7 @@ export default function App() {
   useEffect(() => {
     try {
       localStorage.setItem('delta_till_hide_header_on_sheet_v1', JSON.stringify(isHeaderHiddenOnSheet));
+      localStorage.removeItem('delta_till_last_entered_record_id_v1');
     } catch (e) {}
   }, [isHeaderHiddenOnSheet]);
 
@@ -483,17 +481,12 @@ export default function App() {
               return sortedCloud;
             });
 
-            // On initial startup / cloud load, ensure the active record is set, preserving any record already selected
+            // On initial startup / cloud load, ensure the app defaults to the last saved record or last record
             if (isInitialCloudLoadRef.current) {
               isInitialCloudLoadRef.current = false;
               const startupId = getStartupRecordId(cloudRecords);
               if (startupId) {
-                setActiveRecordId((currentId) => {
-                  if (currentId && cloudRecords.some((r) => r.id === currentId)) {
-                    return currentId;
-                  }
-                  return startupId;
-                });
+                setActiveRecordId(startupId);
               }
             }
           } else {
@@ -896,12 +889,6 @@ export default function App() {
     auditBaselineRef.current = currentRecord ? JSON.parse(JSON.stringify(currentRecord)) : null;
     latestActiveRecordRef.current = currentRecord ? JSON.parse(JSON.stringify(currentRecord)) : null;
     setUndoStack([]);
-
-    if (activeRecordId) {
-      try {
-        localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, activeRecordId);
-      } catch (e) {}
-    }
   }, [activeRecordId]);
 
   // Update active record in records state & sync to Cloud
@@ -912,12 +899,16 @@ export default function App() {
         date: currentRecord.date,
         operator: currentRecord.operator,
         isSaved: currentRecord.isSaved,
+        notes: currentRecord.notes,
+        attachedPdfName: currentRecord.attachedPdf?.name,
         rows: currentRecord.rows,
       });
       const nextDataStr = JSON.stringify({
         date: updatedRecord.date,
         operator: updatedRecord.operator,
         isSaved: updatedRecord.isSaved,
+        notes: updatedRecord.notes,
+        attachedPdfName: updatedRecord.attachedPdf?.name,
         rows: updatedRecord.rows,
       });
       if (prevDataStr !== nextDataStr) {
@@ -1003,9 +994,6 @@ export default function App() {
 
     // Keep active record firmly pinned to this record
     setActiveRecordId(recordWithTime.id);
-    try {
-      localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, recordWithTime.id);
-    } catch (e) {}
 
     if (immediate) {
       return saveRecordToCloudImmediately(recordWithTime);
@@ -1100,9 +1088,6 @@ export default function App() {
     latestActiveRecordRef.current = updated;
     await handleUpdateRecord(updated, true);
     setActiveRecordId(updated.id);
-    try {
-      localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, updated.id);
-    } catch (e) {}
     showToast(`🔒 Sheet for ${formatToUKDate(updated.date)} saved & locked successfully!`);
   };
 
@@ -1124,9 +1109,6 @@ export default function App() {
     latestActiveRecordRef.current = updated;
     await handleUpdateRecord(updated, true);
     setActiveRecordId(updated.id);
-    try {
-      localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, updated.id);
-    } catch (e) {}
     showToast(
       nextLocked
         ? `🔒 Sheet for ${formatToUKDate(updated.date)} locked & verified.`
@@ -1193,7 +1175,6 @@ export default function App() {
     setRecords(updatedList);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
-      localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, newRec.id);
     } catch (e) {}
 
     latestActiveRecordRef.current = newRec;
@@ -1331,11 +1312,9 @@ export default function App() {
     if (currentIndex < listToNav.length - 1 && currentIndex !== -1) {
       const nextId = listToNav[currentIndex + 1].id;
       setActiveRecordId(nextId);
-      try { localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, nextId); } catch (e) {}
     } else if (currentIndex === -1 && listToNav.length > 0) {
       const nextId = listToNav[0].id;
       setActiveRecordId(nextId);
-      try { localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, nextId); } catch (e) {}
     } else {
       showToast('You are at the oldest saved record for this view.');
     }
@@ -1352,11 +1331,9 @@ export default function App() {
     if (currentIndex > 0) {
       const nextId = listToNav[currentIndex - 1].id;
       setActiveRecordId(nextId);
-      try { localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, nextId); } catch (e) {}
     } else if (currentIndex === -1 && listToNav.length > 0) {
       const nextId = listToNav[0].id;
       setActiveRecordId(nextId);
-      try { localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, nextId); } catch (e) {}
     } else {
       showToast('You are at the most recent saved record for this view.');
     }
@@ -1372,7 +1349,6 @@ export default function App() {
     const existing = records.find((r) => r.date === targetDate);
     if (existing) {
       setActiveRecordId(existing.id);
-      try { localStorage.setItem(LAST_ENTERED_RECORD_ID_KEY, existing.id); } catch (e) {}
       setActiveTab('sheet');
       showToast(`Jumped to day sheet for ${formatToUKDate(targetDate)}.`);
     } else {

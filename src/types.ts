@@ -13,12 +13,21 @@ export interface TillRowData {
   vat?: number;             // VAT value entered for Online Orders
 }
 
+export interface AttachedPdfFile {
+  name: string;
+  size: number; // size in bytes
+  type: string; // e.g. 'application/pdf'
+  dataUrl?: string; // base64 data URL
+  uploadedAt: string;
+}
+
 export interface SheetRecord {
   id: string;
   date: string; // YYYY-MM-DD format for input/sort, display as DD/MM/YYYY
   operator?: string; // Selected operator / cashier / manager
   isSaved: boolean;
   notes?: string;
+  attachedPdf?: AttachedPdfFile | null;
   createdAt: string;
   updatedAt: string;
   rows: TillRowData[];

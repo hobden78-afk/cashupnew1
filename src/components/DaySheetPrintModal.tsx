@@ -396,9 +396,10 @@ export const DaySheetPrintModal: React.FC<DaySheetPrintModalProps> = ({
     </table>
 
     ${
-      record.notes
+      record.notes || record.attachedPdf
         ? `<div style="margin-top: 16px; padding: 10px; border: 1.5px solid #000; font-family: monospace; font-size: 11px; background: #fafafa;">
-            <strong>Shift / Audit Notes:</strong> ${record.notes}
+            ${record.notes ? `<strong>Shift / Audit Notes:</strong> ${record.notes}` : ""}
+            ${record.attachedPdf ? `${record.notes ? '<br/>' : ''}<strong>Attached PDF Document:</strong> 📎 ${record.attachedPdf.name}` : ""}
           </div>`
         : ""
     }
@@ -740,12 +741,24 @@ export const DaySheetPrintModal: React.FC<DaySheetPrintModalProps> = ({
               </table>
             </div>
 
-            {record.notes && (
+            {(record.notes || record.attachedPdf) && (
               <div className="p-3 border-2 border-black bg-zinc-50 font-mono text-xs">
-                <span className="font-bold uppercase tracking-wider block text-zinc-500 text-[10px] mb-1">
-                  Audit Notes:
-                </span>
-                {record.notes}
+                {record.notes && (
+                  <>
+                    <span className="font-bold uppercase tracking-wider block text-zinc-500 text-[10px] mb-1">
+                      Audit Notes:
+                    </span>
+                    <div>{record.notes}</div>
+                  </>
+                )}
+                {record.attachedPdf && (
+                  <div className={record.notes ? "mt-2 pt-2 border-t border-zinc-200" : ""}>
+                    <span className="font-bold uppercase tracking-wider block text-zinc-500 text-[10px] mb-0.5">
+                      Attached Document:
+                    </span>
+                    <span className="text-zinc-900 font-bold">📎 {record.attachedPdf.name}</span>
+                  </div>
+                )}
               </div>
             )}
           </div>

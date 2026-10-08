@@ -280,12 +280,12 @@ export async function exportDaySheetToPDF(
         </tfoot>
       </table>
 
-      <!-- Audit Notes Section (if notes present) -->
+      <!-- Audit Notes & Attached PDF Section -->
       ${
-        record.notes
+        record.notes || record.attachedPdf
           ? `<div style="margin-bottom: 14px; padding: 8px 12px; border: 1.5px solid #000000; font-family: 'JetBrains Mono', monospace; font-size: 9.5pt; background-color: #f8fafc; page-break-inside: avoid;">
-              <strong style="color: #000000; text-transform: uppercase; font-size: 8pt; display: block; margin-bottom: 2px;">Shift / Audit Notes:</strong>
-              ${record.notes}
+              ${record.notes ? `<strong style="color: #000000; text-transform: uppercase; font-size: 8pt; display: block; margin-bottom: 2px;">Shift / Audit Notes:</strong>${record.notes}` : ''}
+              ${record.attachedPdf ? `<div style="${record.notes ? 'margin-top: 6px; padding-top: 6px; border-top: 1px solid #e2e8f0;' : ''}"><strong style="color: #000000; text-transform: uppercase; font-size: 8pt; display: block; margin-bottom: 2px;">Attached PDF Document:</strong>📎 ${record.attachedPdf.name}</div>` : ''}
             </div>`
           : ''
       }

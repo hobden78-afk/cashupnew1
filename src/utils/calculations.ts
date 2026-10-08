@@ -259,6 +259,10 @@ export function exportRecordToCSV(record: SheetRecord, allRecords: SheetRecord[]
     lines.push(`"Notes: ${record.notes.replace(/"/g, '""')}"`);
   }
 
+  if (record.attachedPdf) {
+    lines.push(`"Attached PDF: ${record.attachedPdf.name.replace(/"/g, '""')}"`);
+  }
+
   return lines.join('\n');
 }
 
